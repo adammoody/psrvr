@@ -471,6 +471,13 @@ static void _send_notification(int status,
 
     buf = OBJ_NEW(opal_buffer_t);
 
+    opal_output_verbose(5, orte_state_base_framework.framework_output,
+                        "%s state:base:sending notification %s proc %s target %s",
+                        ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
+                        ORTE_ERROR_NAME(status),
+                        ORTE_NAME_PRINT(proc),
+                        ORTE_NAME_PRINT(target));
+
     /* pack the status */
     if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &status, 1, OPAL_INT))) {
         ORTE_ERROR_LOG(rc);
@@ -485,8 +492,8 @@ static void _send_notification(int status,
         return;
     }
 
-    /* we are going to pass two opal_value_t's */
-    rc = 2;
+    /* we are going to pass three opal_value_t's */
+    rc = 3;
     if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &rc, 1, OPAL_INT))) {
         ORTE_ERROR_LOG(rc);
         OBJ_RELEASE(buf);
@@ -514,6 +521,20 @@ static void _send_notification(int status,
     kv.type = OPAL_NAME;
     kv.data.name.jobid = target->jobid;
     kv.data.name.vpid = target->vpid;
+    kvptr = &kv;
+    if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &kvptr, 1, OPAL_VALUE))) {
+        ORTE_ERROR_LOG(rc);
+        OBJ_DESTRUCT(&kv);
+        OBJ_RELEASE(buf);
+        return;
+    }
+    OBJ_DESTRUCT(&kv);
+
+    /* mark this as intended for non-default event handlers */
+    OBJ_CONSTRUCT(&kv, opal_value_t);
+    kv.key = strdup(OPAL_PMIX_EVENT_NON_DEFAULT);
+    kv.type = OPAL_BOOL;
+    kv.data.flag = true;
     kvptr = &kv;
     if (ORTE_SUCCESS != (rc = opal_dss.pack(buf, &kvptr, 1, OPAL_VALUE))) {
         ORTE_ERROR_LOG(rc);

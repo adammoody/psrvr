@@ -476,9 +476,6 @@ static void _notify_client_event(int sd, short args, void *cbdata)
         if ((PMIX_MAX_ERR_CONSTANT == reginfoptr->code && !cd->nondefault) ||
             cd->status == reginfoptr->code) {
             PMIX_LIST_FOREACH(pr, &reginfoptr->peers, pmix_peer_events_info_t) {
-                pmix_output(0, "COMPARING %s:%d TO %s:%d",
-                            pr->peer->info->nptr->nspace, pr->peer->info->rank,
-                            cd->source.nspace, cd->source.rank);
                 /* if this client was the source of the event, then
                  * don't send it back */
                 if (0 == strncmp(cd->source.nspace, pr->peer->info->nptr->nspace, PMIX_MAX_NSLEN) &&
@@ -504,8 +501,9 @@ static void _notify_client_event(int sd, short args, void *cbdata)
                     }
                 }
                 pmix_output_verbose(2, pmix_globals.debug_output,
-                                    "pmix_server: notifying client %s:%d",
-                                    pr->peer->info->nptr->nspace, pr->peer->info->rank);
+                                    "pmix_server: notifying client %s:%d of status %s",
+                                    pr->peer->info->nptr->nspace, pr->peer->info->rank,
+                                    PMIx_Error_string(cd->status));
                 PMIX_RETAIN(cd->buf);
                 PMIX_SERVER_QUEUE_REPLY(pr->peer, 0, cd->buf);
             }
@@ -558,7 +556,7 @@ static pmix_status_t notify_client_of_event(pmix_status_t status,
         for (n=0; n < ninfo; n++) {
             if (0 == strncmp(info[n].key, PMIX_EVENT_NON_DEFAULT, PMIX_MAX_KEYLEN)) {
                 cd->nondefault = true;
-            } else if (strncmp(info[n].key, PMIX_EVENT_CUSTOM_RANGE, PMIX_MAX_KEYLEN)) {
+            } else if (0 == strncmp(info[n].key, PMIX_EVENT_CUSTOM_RANGE, PMIX_MAX_KEYLEN)) {
                 /* provides an array of pmix_proc_t identifying the procs
                  * that are to receive this notification */
                 if (PMIX_DATA_ARRAY == info[n].value.type &&
@@ -571,7 +569,6 @@ static pmix_status_t notify_client_of_event(pmix_status_t status,
                     cd->ntargets = 1;
                     PMIX_PROC_CREATE(cd->targets, cd->ntargets);
                     memcpy(cd->targets, info[n].value.data.proc, sizeof(pmix_proc_t));
-                    pmix_output(0, "TARGET %s:%d", cd->targets[0].nspace, cd->targets[0].rank);
                 } else {
                     /* this is an error */
                     PMIX_ERROR_LOG(PMIX_ERR_BAD_PARAM);

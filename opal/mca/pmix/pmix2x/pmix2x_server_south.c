@@ -499,7 +499,6 @@ int pmix2x_server_notify_event(int status,
         OPAL_LIST_FOREACH(kv, info, opal_value_t) {
             (void)strncpy(pinfo[n].key, kv->key, PMIX_MAX_KEYLEN);
             pmix2x_value_load(&pinfo[n].value, kv);
-            opal_output(0, "LOADING %s TYPE %d", pinfo[n].key, pinfo[n].value.type);
             ++n;
         }
     } else {
