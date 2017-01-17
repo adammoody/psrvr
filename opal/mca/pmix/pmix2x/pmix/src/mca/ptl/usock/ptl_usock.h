@@ -9,7 +9,7 @@
  *                         University of Stuttgart.  All rights reserved.
  * Copyright (c) 2004-2005 The Regents of the University of California.
  *                         All rights reserved.
- * Copyright (c) 2016      Intel, Inc. All rights reserved.
+ * Copyright (c) 2016-2017 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -24,13 +24,6 @@
 
 BEGIN_C_DECLS
 
-typedef struct {
-    pmix_ptl_base_component_t super;
-    char *tmpdir;
-    struct sockaddr_storage connection;
-    char *filename;
-} pmix_ptl_usock_component_t;
-
 /* header for messages */
 typedef struct {
     int pindex;
@@ -38,7 +31,7 @@ typedef struct {
     size_t nbytes;
 } pmix_usock_hdr_t;
 
-extern pmix_ptl_usock_component_t mca_ptl_usock_component;
+extern pmix_ptl_base_component_t mca_ptl_usock_component;
 
 extern pmix_ptl_module_t pmix_ptl_usock_module;
 

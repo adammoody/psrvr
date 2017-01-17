@@ -20,6 +20,7 @@
 #include "src/client/pmix_client_ops.h"
 #include "src/server/pmix_server_ops.h"
 #include "src/include/pmix_globals.h"
+#include "src/mca/bfrops/bfrops.h"
 
  typedef struct {
     pmix_object_t super;
@@ -72,7 +73,7 @@ static void regevents_cbfunc(struct pmix_peer_t *peer, pmix_ptl_hdr_t *hdr,
 
     /* unpack the status code */
     cnt = 1;
-    if ((PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &ret, &cnt, PMIX_STATUS))) ||
+    if ((PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, buf, &ret, &cnt, PMIX_STATUS))) ||
         (PMIX_SUCCESS != ret)) {
         PMIX_ERROR_LOG(rc);
         /* remove the err handler and call the error handler reg completion callback fn.*/
@@ -123,31 +124,36 @@ static pmix_status_t _send_to_server(pmix_rshift_caddy_t *rcd)
 
     msg = PMIX_NEW(pmix_buffer_t);
     /* pack the cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack the number of codes */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &rcd->cd->ncodes, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &rcd->cd->ncodes, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack any provided codes - may be NULL */
     if (NULL != rcd->cd->codes && 0 < rcd->cd->ncodes) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, rcd->cd->codes, rcd->cd->ncodes, PMIX_STATUS))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver, msg,
+                                                   rcd->cd->codes, rcd->cd->ncodes, PMIX_STATUS))) {
             PMIX_ERROR_LOG(rc);
             return rc;
         }
     }
 
     /* pack the number of info */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &rcd->ninfo, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &rcd->ninfo, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack any provided info - may be NULL */
     if (NULL != rcd->info && 0 < rcd->ninfo) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, rcd->info, rcd->ninfo, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, rcd->info, rcd->ninfo, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
             return rc;
         }
@@ -456,9 +462,10 @@ static void dereg_event_hdlr(int sd, short args, void *cbdata)
 
     /* if I am not the server, then I need to notify the server
      * to remove my registration */
-    if (PMIX_PROC_SERVER != pmix_globals.proc_type) {
-        msg = PMIX_NEW(pmix_buffer_t);
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+    if (!PMIX_PROC_IS_SERVER) {
+        msg = pmix_bfrops.create_buffer(&pmix_client_globals.myserver);
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, &cmd, 1, PMIX_CMD))) {
             PMIX_RELEASE(msg);
             goto cleanup;
         }
@@ -474,11 +481,13 @@ static void dereg_event_hdlr(int sd, short args, void *cbdata)
                  * the server to dereg the default handler */
                 if (0 == pmix_list_get_size(&pmix_globals.events.default_events)) {
                     n = 1;
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &n, 1, PMIX_SIZE))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &n, 1, PMIX_SIZE))) {
                         PMIX_RELEASE(msg);
                         goto cleanup;
                     }
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &wildcard, 1, PMIX_STATUS))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &wildcard, 1, PMIX_STATUS))) {
                         PMIX_RELEASE(msg);
                         goto cleanup;
                     }
@@ -504,12 +513,14 @@ static void dereg_event_hdlr(int sd, short args, void *cbdata)
                 }
                 if (!found) {
                     n = 1;
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &n, 1, PMIX_SIZE))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &n, 1, PMIX_SIZE))) {
                         PMIX_RELEASE(msg);
                         PMIX_RELEASE(sing);
                         goto cleanup;
                     }
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &sing->code, 1, PMIX_STATUS))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &sing->code, 1, PMIX_STATUS))) {
                         PMIX_RELEASE(msg);
                         PMIX_RELEASE(sing);
                         goto cleanup;
@@ -546,12 +557,14 @@ static void dereg_event_hdlr(int sd, short args, void *cbdata)
                 }
                 if (!found) {
                     n = multi->ncodes;
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &n, 1, PMIX_SIZE))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &n, 1, PMIX_SIZE))) {
                         PMIX_RELEASE(msg);
                         PMIX_RELEASE(multi);
                         goto cleanup;
                     }
-                    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &multi->codes, n, PMIX_STATUS))) {
+                    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                               msg, &multi->codes, n, PMIX_STATUS))) {
                         PMIX_RELEASE(msg);
                         PMIX_RELEASE(multi);
                         goto cleanup;

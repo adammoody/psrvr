@@ -53,7 +53,7 @@
 
 #include "src/class/pmix_list.h"
 #include "src/util/output.h"
-#include "src/buffer_ops/types.h"
+#include "src/mca/bfrops/bfrops_types.h"
 
 BEGIN_C_DECLS
 
@@ -144,9 +144,14 @@ PMIX_CLASS_DECLARATION(pmix_ptl_queue_t);
 
 /* define listener protocol types */
 typedef uint16_t pmix_listener_protocol_t;
-#define PMIX_PROTOCOL_V1        0       // legacy usock
-#define PMIX_PROTOCOL_V2        1       // tcp
-#define PMIX_PROTOCOL_V3        2       // updated usock
+/****  VERSION 1  ****/
+/* there is no version 1 TCP protocol as TCP
+ * support did not exist in the PMIx v1.x series */
+#define PMIX_PROTOCOL_V1_USOCK  1       // legacy usock
+/****  VERSION 2  ****/
+#define PMIX_PROTOCOL_V2_USOCK  2       // update usock
+#define PMIX_PROTOCOL_V2_TCP    3       // tcp
+
 
 /* connection support */
 typedef struct {
@@ -174,6 +179,8 @@ PMIX_CLASS_DECLARATION(pmix_pending_connection_t);
 typedef struct pmix_listener_t {
     pmix_list_item_t super;
     pmix_listener_protocol_t protocol;
+    char *filename;
+    struct sockaddr_storage connection;
     struct pmix_ptl_module_t *ptl;
     int socket;
     char *varname;

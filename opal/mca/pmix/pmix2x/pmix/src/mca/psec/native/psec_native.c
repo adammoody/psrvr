@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2015-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2016      IBM Corporation.  All rights reserved.
  *
  * $COPYRIGHT$
@@ -63,14 +63,14 @@ static pmix_status_t create_cred(pmix_listener_protocol_t protocol,
     gid_t egid;
     char *tmp, *ptr;
 
-    if (PMIX_PROTOCOL_V1 == protocol ||
-        PMIX_PROTOCOL_V3 == protocol) {
+    if (PMIX_PROTOCOL_V1_USOCK == protocol ||
+        PMIX_PROTOCOL_V2_USOCK == protocol) {
         /* these are usock protocols - nothing to do */
         *cred = NULL;
         *len = 0;
         return PMIX_SUCCESS;
     }
-    if (PMIX_PROTOCOL_V2 == protocol) {
+    if (PMIX_PROTOCOL_V2_TCP == protocol) {
         /* tcp protocol - need to provide our effective
          * uid and gid for validation on remote end */
         tmp = (char*)malloc(sizeof(uid_t) + sizeof(gid_t));
@@ -112,8 +112,8 @@ static pmix_status_t validate_cred(pmix_peer_t *peer,
     pmix_output_verbose(2, pmix_globals.debug_output,
                         "psec: native validate_cred %s", cred ? cred : "NULL");
 
-    if (PMIX_PROTOCOL_V1 == protocol ||
-        PMIX_PROTOCOL_V3 == protocol) {
+    if (PMIX_PROTOCOL_V1_USOCK == protocol ||
+        PMIX_PROTOCOL_V2_USOCK == protocol) {
         /* these are usock protocols - get the remote side's uid/gid */
 #if defined(SO_PEERCRED) && (defined(HAVE_STRUCT_UCRED_UID) || defined(HAVE_STRUCT_UCRED_CR_UID))
         /* Ignore received 'cred' and validate ucred for socket instead. */
@@ -166,7 +166,7 @@ static pmix_status_t validate_cred(pmix_peer_t *peer,
         return PMIX_SUCCESS;
     }
 
-    if (PMIX_PROTOCOL_V2 == protocol) {
+    if (PMIX_PROTOCOL_V2_TCP == protocol) {
         /* this is a tcp protocol, so the cred is actually the uid/gid
          * passed upwards from the client */
         ln = len;

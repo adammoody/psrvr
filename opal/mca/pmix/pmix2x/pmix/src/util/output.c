@@ -10,7 +10,7 @@
  * Copyright (c) 2004-2006 The Regents of the University of California.
  *                         All rights reserved.
  * Copyright (c) 2007-2008 Cisco Systems, Inc.  All rights reserved.
- * Copyright (c) 2014-2016 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * $COPYRIGHT$
@@ -201,7 +201,7 @@ bool pmix_output_init(void)
     if (0 > asprintf(&output_prefix, "output-pid%d-", getpid())) {
         return false;
     }
-    output_dir = strdup(pmix_tmp_directory());
+    output_dir = strdup(pmix_tmp_directory(NULL, 0, NULL));
 
     /* Open the default verbose stream */
     verbose_stream = pmix_output_open(&verbose);

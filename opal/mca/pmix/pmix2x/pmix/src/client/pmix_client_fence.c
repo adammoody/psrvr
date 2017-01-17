@@ -1,6 +1,6 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
- * Copyright (c) 2014-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2015 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * Copyright (c) 2014      Artem Y. Polyakov <artpol84@gmail.com>.
@@ -47,7 +47,7 @@
 #include PMIX_EVENT_HEADER
 
 #include "src/class/pmix_list.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/bfrops.h"
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/hash.h"
@@ -178,7 +178,8 @@ static pmix_status_t unpack_return(pmix_buffer_t *data)
 
     /* unpack the status code */
     cnt = 1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(data, &ret, &cnt, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 data, &ret, &cnt, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
@@ -194,29 +195,34 @@ static pmix_status_t pack_fence(pmix_buffer_t *msg, pmix_cmd_t cmd,
     pmix_status_t rc;
 
     /* pack the cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
 
     /* pack the number of procs */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &nprocs, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &nprocs, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack any provided procs - must always be at least one (our own) */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, procs, nprocs, PMIX_PROC))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, procs, nprocs, PMIX_PROC))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack the number of info */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &ninfo, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &ninfo, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     /* pack any provided info - may be NULL */
     if (NULL != info && 0 < ninfo) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, info, ninfo, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, info, ninfo, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
             return rc;
         }

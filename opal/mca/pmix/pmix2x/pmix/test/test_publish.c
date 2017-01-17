@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2015-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * $COPYRIGHT$
@@ -12,7 +12,8 @@
 
 #include "test_publish.h"
 #include <time.h>
-#include "src/buffer_ops/buffer_ops.h"
+
+#include "src/include/pmix_globals.h"
 
 typedef struct {
     int in_progress;

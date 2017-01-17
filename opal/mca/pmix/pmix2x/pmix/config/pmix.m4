@@ -90,6 +90,7 @@ AC_DEFUN([PMIX_SETUP_CORE],[
     if test "$?" != "0"; then
         AC_MSG_ERROR([Cannot continue])
     fi
+    AC_MSG_RESULT([$PMIX_MAJOR_VERSION])
     AC_SUBST(PMIX_MAJOR_VERSION)
     AC_DEFINE_UNQUOTED([PMIX_MAJOR_VERSION], [$PMIX_MAJOR_VERSION],
                        [The library major version is always available, contrary to VERSION])
@@ -98,6 +99,7 @@ AC_DEFUN([PMIX_SETUP_CORE],[
     if test "$?" != "0"; then
         AC_MSG_ERROR([Cannot continue])
     fi
+    AC_MSG_RESULT([$PMIX_MINOR_VERSION])
     AC_SUBST(PMIX_MINOR_VERSION)
     AC_DEFINE_UNQUOTED([PMIX_MINOR_VERSION], [$PMIX_MINOR_VERSION],
                        [The library minor version is always available, contrary to VERSION])
@@ -112,6 +114,7 @@ AC_DEFUN([PMIX_SETUP_CORE],[
     if test "$?" != "0"; then
         AC_MSG_ERROR([Cannot continue])
     fi
+    AC_MSG_RESULT([$PMIX_RELEASE_VERSION])
     AC_SUBST(PMIX_RELEASE_VERSION)
     AC_DEFINE_UNQUOTED([PMIX_RELEASE_VERSION], [$PMIX_RELEASE_VERSION],
                        [The library release version is always available, contrary to VERSION])
@@ -676,9 +679,9 @@ AC_DEFUN([PMIX_SETUP_CORE],[
         # rather than have successive assignments to these shell
         # variables, lest the $(foo) names try to get evaluated here.
         # Yuck!
-        CPPFLAGS="-I$PMIX_top_builddir -I$PMIX_top_srcdir -I$PMIX_top_srcdir/src -I$PMIX_top_builddir/include -I$PMIX_top_srcdir/include $CPPFLAGS"
+        CPPFLAGS='-I$(PMIX_top_builddir) -I$(PMIX_top_srcdir) -I$(PMIX_top_srcdir)/src -I$(PMIX_top_builddir)/include -I$(PMIX_top_srcdir)/include'" $CPPFLAGS"
     else
-        CPPFLAGS="-I$PMIX_top_srcdir -I$PMIX_top_srcdir/src -I$PMIX_top_srcdir/include $CPPFLAGS"
+        CPPFLAGS='-I$(PMIX_top_srcdir) -I$(PMIX_top_srcdir)/src -I$(PMIX_top_srcdir)/include'" $CPPFLAGS"
     fi
 
     # pmixdatadir, pmixlibdir, and pmixinclude are essentially the same as
@@ -704,11 +707,6 @@ AC_DEFUN([PMIX_SETUP_CORE],[
         pmix_config_prefix[src/util/keyval/Makefile]
         pmix_config_prefix[src/mca/base/Makefile]
         )
-
-    # publish any embedded flags so external wrappers can use them
-    AC_SUBST(PMIX_EMBEDDED_LIBS)
-    AC_SUBST(PMIX_EMBEDDED_LDFLAGS)
-    AC_SUBST(PMIX_EMBEDDED_CPPFLAGS)
 
     # Success
     $2

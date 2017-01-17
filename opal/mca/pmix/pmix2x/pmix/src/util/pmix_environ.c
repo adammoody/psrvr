@@ -12,7 +12,7 @@
  * Copyright (c) 2006      Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2007-2013 Los Alamos National Security, LLC.  All rights
  *                         reserved.
- * Copyright (c) 2014-2016 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2016      IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
@@ -28,9 +28,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 #include "src/util/printf.h"
 #include "src/util/argv.h"
+#include "src/util/error.h"
+#include "src/util/os_dirpath.h"
+#include "src/util/os_path.h"
 #include "src/util/pmix_environ.h"
 
 #define PMIX_DEFAULT_TMPDIR "/tmp"
@@ -93,8 +98,10 @@ char **pmix_environ_merge(char **minor, char **major)
  * Portable version of setenv(), allowing editing of any environ-like
  * array
  */
- pmix_status_t pmix_setenv(const char *name, const char *value, bool overwrite,
-                char ***env)
+ pmix_status_t pmix_setenv(const char *name,
+                           const char *value,
+                           bool overwrite,
+                           char ***env)
 {
     int i;
     char *newvalue, *compare;
@@ -220,14 +227,54 @@ char **pmix_environ_merge(char **minor, char **major)
     return (found) ? PMIX_SUCCESS : PMIX_ERR_NOT_FOUND;
 }
 
-const char* pmix_tmp_directory( void )
+char* pmix_tmp_directory(pmix_info_t *info, size_t ninfo, char *tdir)
 {
-    const char* str;
+    char *str, *s, *s2;
+    size_t n;
+    uid_t uid;
+    char hostname[512];
+    mode_t my_mode = S_IRWXU;
 
-    if( NULL == (str = getenv("TMPDIR")) )
-        if( NULL == (str = getenv("TEMP")) )
-            if( NULL == (str = getenv("TMP")) )
-                str = PMIX_DEFAULT_TMPDIR;
+    if (NULL != info && NULL != tdir) {
+        for (n=0; n < ninfo; n++) {
+            if (0 == strcmp(info[n].key, tdir)) {
+                str = strdup(info[n].value.data.string);
+                return str;
+            }
+        }
+    }
+
+    /* if we get here, then no directive was given - so we
+     * look at the environment */
+    if (NULL == (s = getenv("TMPDIR"))) {
+        if (NULL == (s = getenv("TEMP"))) {
+            if (NULL == (s = getenv("TMP"))) {
+                s = PMIX_DEFAULT_TMPDIR;
+            }
+        }
+    }
+    /* protect the main environment tmp directory from
+     * litter by putting our tmpdir in a user-specific
+     * location */
+    uid = geteuid();
+    gethostname(hostname, 512);
+    if (0 > asprintf(&s2, "pmix.%s.%lu", hostname, (unsigned long)uid)) {
+        PMIX_ERROR_LOG(PMIX_ERR_NOMEM);
+        return NULL;
+    }
+    str = pmix_os_path(false, s, s2, NULL);
+    free(s2);
+
+    /* Sanity check before creating the directory with the proper mode,
+     * Make sure it doesn't exist already */
+    if (PMIX_ERR_NOT_FOUND == pmix_os_dirpath_access(str, my_mode)) {
+        /* the directory doesn't exist, so create it */
+        if (PMIX_SUCCESS != pmix_os_dirpath_create(str, my_mode)) {
+            free(str);
+            str = NULL;
+        }
+    }
+
     return str;
 }
 

@@ -52,7 +52,7 @@
 #include PMIX_EVENT_HEADER
 
 #include "src/class/pmix_list.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/bfrops.h"
 #include "src/util/argv.h"
 #include "src/util/compress.h"
 #include "src/util/error.h"
@@ -188,7 +188,8 @@ static void _value_cbfunc(pmix_status_t status, pmix_value_t *kv, void *cbdata)
 
     cb->status = status;
     if (PMIX_SUCCESS == status) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.copy((void**)&cb->value, kv, PMIX_VALUE))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.copy(&pmix_client_globals.myserver,
+                                                   (void**)&cb->value, kv, PMIX_VALUE))) {
             PMIX_ERROR_LOG(rc);
         }
     }
@@ -205,31 +206,36 @@ static pmix_buffer_t* _pack_get(char *nspace, pmix_rank_t rank,
     /* nope - see if we can get it */
     msg = PMIX_NEW(pmix_buffer_t);
     /* pack the get cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msg);
         return NULL;
     }
     /* pack the request information - we'll get the entire blob
      * for this proc, so we don't need to pass the key */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &nspace, 1, PMIX_STRING))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &nspace, 1, PMIX_STRING))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msg);
         return NULL;
     }
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &rank, 1, PMIX_PROC_RANK))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &rank, 1, PMIX_PROC_RANK))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msg);
         return NULL;
     }
     /* pack the number of info structs */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &ninfo, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &ninfo, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msg);
         return NULL;
     }
     if (0 < ninfo) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, info, ninfo, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, info, ninfo, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msg);
             return NULL;
@@ -270,7 +276,8 @@ static void _getnb_cbfunc(struct pmix_peer_t *pr,
 
     /* unpack the status */
     cnt = 1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &ret, &cnt, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &ret, &cnt, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         return;
     }
@@ -295,7 +302,8 @@ static void _getnb_cbfunc(struct pmix_peer_t *pr,
     }
 
 #if (defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1))
-    if (PMIX_SUCCESS != (rc = pmix_dstore_fetch(nptr->nspace, cb->rank, cb->key, &val))){
+    if (PMIX_SUCCESS != (rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                                                nptr->nspace, cb->rank, cb->key, &val))){
         /* DO NOT error log this status - it is perfectly okay
          * for a key not to be found */
         goto done;
@@ -306,19 +314,22 @@ static void _getnb_cbfunc(struct pmix_peer_t *pr,
      * of buffers from multiple scopes */
     cur_rank = rank;
     cnt = 1;
-    while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(buf, &cur_rank, &cnt, PMIX_PROC_RANK))) {
+    while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                    buf, &cur_rank, &cnt, PMIX_PROC_RANK))) {
         pmix_kval_t *cur_kval;
         pmix_buffer_t *bptr;
 
         cnt = 1;
-        if (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(buf, &bptr, &cnt, PMIX_BUFFER))) {
+        if (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                     buf, &bptr, &cnt, PMIX_BUFFER))) {
             /* if the rank is WILDCARD, then this is an nspace blob */
             if (PMIX_RANK_WILDCARD == cur_rank) {
                 char *nspace;
                 /* unpack the nspace - we don't really need it, but have to
                  * unpack it to maintain sequence */
                 cnt = 1;
-                if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(bptr, &nspace, &cnt, PMIX_STRING))) {
+                if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                             bptr, &nspace, &cnt, PMIX_STRING))) {
                     PMIX_ERROR_LOG(rc);
                     return;
                 }
@@ -332,7 +343,8 @@ static void _getnb_cbfunc(struct pmix_peer_t *pr,
             } else {
                 cnt = 1;
                 cur_kval = PMIX_NEW(pmix_kval_t);
-                while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(bptr, cur_kval, &cnt, PMIX_KVAL))) {
+                while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                                bptr, cur_kval, &cnt, PMIX_KVAL))) {
                     pmix_output_verbose(2, pmix_globals.debug_output,
                                         "pmix: unpacked key %s", cur_kval->key);
                     if (PMIX_SUCCESS != (rc = pmix_hash_store(&nptr->modex, cur_rank, cur_kval))) {
@@ -341,7 +353,8 @@ static void _getnb_cbfunc(struct pmix_peer_t *pr,
                     if (NULL != cb->key && 0 == strcmp(cb->key, cur_kval->key)) {
                         pmix_output_verbose(2, pmix_globals.debug_output,
                                             "pmix: found requested value");
-                        if (PMIX_SUCCESS != (rc = pmix_bfrop.copy((void**)&val, cur_kval->value, PMIX_VALUE))) {
+                        if (PMIX_SUCCESS != (rc = pmix_bfrops.copy(&pmix_client_globals.myserver,
+                                                                   (void**)&val, cur_kval->value, PMIX_VALUE))) {
                             PMIX_ERROR_LOG(rc);
                             PMIX_RELEASE(cur_kval);
                             val = NULL;
@@ -408,7 +421,8 @@ done:
            /* we have the data - see if we can find the key */
             val = NULL;
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-            rc = pmix_dstore_fetch(nptr->nspace, rank, cb->key, &val);
+            rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                                   nptr->nspace, rank, cb->key, &val);
 #else
             rc = pmix_hash_fetch(&nptr->modex, rank, cb->key, &val);
 #endif /* PMIX_ENABLE_DSTORE */
@@ -524,7 +538,8 @@ static void _getnbfn(int fd, short flags, void *cbdata)
          * so no need to check the modex */
         if (PMIX_RANK_WILDCARD != cb->rank) {
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-            if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(nptr->nspace, cb->rank, NULL, &val))) {
+            if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                                                        nptr->nspace, cb->rank, NULL, &val))) {
 #else
             if (PMIX_SUCCESS == (rc = pmix_hash_fetch(&nptr->modex, cb->rank, NULL, &val))) {
 #endif /* PMIX_ENABLE_DSTORE */
@@ -628,7 +643,8 @@ static void _getnbfn(int fd, short flags, void *cbdata)
     if (0 == strncmp(cb->key, "pmix", 4)) {
         /* should be in the internal hash table. */
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-        if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(cb->nspace, cb->rank, cb->key, &val))) {
+        if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                                                    cb->nspace, cb->rank, cb->key, &val))) {
 #else
         if (PMIX_SUCCESS == (rc = pmix_hash_fetch(&nptr->internal, cb->rank, cb->key, &val))) {
 #endif
@@ -683,9 +699,10 @@ static void _getnbfn(int fd, short flags, void *cbdata)
         /* Two option possible here:
            - we asking the key from UNDEF process and local proc
              haven't pushed this data
-           - we askin the key from the particular process which is not us.
+           - we asking the key from the particular process which is not us.
          */
-        rc = pmix_dstore_fetch(nptr->nspace, cb->rank, cb->key, &val);
+        rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                               nptr->nspace, cb->rank, cb->key, &val);
     }
 #else
     rc = pmix_hash_fetch(&nptr->modex, cb->rank, cb->key, &val);

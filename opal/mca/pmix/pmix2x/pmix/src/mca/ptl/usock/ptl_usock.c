@@ -13,7 +13,7 @@
  * Copyright (c) 2011-2014 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2011-2013 Los Alamos National Security, LLC.  All rights
  *                         reserved.
- * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2017 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -49,9 +49,12 @@
 
 #include "src/util/argv.h"
 #include "src/util/error.h"
+#include "src/util/os_path.h"
+#include "src/util/pmix_environ.h"
 #include "src/client/pmix_client_ops.h"
 #include "src/include/pmix_globals.h"
 #include "src/include/pmix_socket_errno.h"
+#include "src/mca/bfrops/base/base.h"
 #include "src/mca/psec/psec.h"
 
 #include "src/mca/ptl/base/base.h"
@@ -77,8 +80,8 @@ pmix_ptl_module_t pmix_ptl_usock_module = {
     .connect_to_peer = connect_to_peer
 };
 
-static pmix_status_t recv_connect_ack(int sd);
-static pmix_status_t send_connect_ack(int sd);
+static pmix_status_t recv_connect_ack(int sd, pmix_listener_protocol_t protocol);
+static pmix_status_t send_connect_ack(int sd, pmix_listener_protocol_t protocol);
 
 static pmix_status_t init(void)
 {
@@ -89,26 +92,135 @@ static void finalize(void)
 {
 }
 
+static char *pmix_getline(FILE *fp)
+{
+    char *ret, *buff;
+    char input[1024];
+
+    ret = fgets(input, 1024, fp);
+    if (NULL != ret) {
+       input[strlen(input)-1] = '\0';  /* remove newline */
+       buff = strdup(input);
+       return buff;
+    }
+
+    return NULL;
+}
+
 static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
                                      pmix_info_t *info, size_t ninfo)
 {
     struct sockaddr_un *address;
-    char *evar, **uri;
+    char *evar, **uri, *p, *filename, *tmpdir;
+    FILE *fp;
     pmix_status_t rc;
     int sd;
     pmix_socklen_t len;
+    bool system = false;
+    bool system_first = false;
+    pmix_listener_protocol_t protocol;
+    size_t n;
+    struct sockaddr_storage connection;
 
-    /* if we are not a client, there is nothing we can do */
-    if (!PMIX_PROC_IS_CLIENT) {
-        return PMIX_ERR_NOT_SUPPORTED;
+    /* see if the connection info is in the info array - if
+     * so, then that overrides all other options */
+    if (NULL != info) {
+        for (n=0; n < ninfo; n++) {
+            if (0 == strcmp(info[n].key, PMIX_USOCK_URI)) {
+                evar = strdup(info[n].value.data.string);
+            } else if (0 == strcmp(info[n].key, PMIX_CONNECT_TO_SYSTEM)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    system = true;
+                } else {
+                    system = info[n].value.data.flag;
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_CONNECT_SYSTEM_FIRST)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    system_first = true;
+                } else {
+                    system_first = info[n].value.data.flag;
+                }
+            }
+        }
     }
 
-    /* if we don't have a path to the daemon rendezvous point,
-     * then we need to return an error */
-    if (NULL == (evar = getenv("PMIX_SERVER_URI"))) {
-        /* let the caller know that the server isn't available */
-        return PMIX_ERR_SERVER_NOT_AVAIL;
+    /* if I am a client, then we need to look for the appropriate
+     * connection info in the environment */
+    if (PMIX_PROC_CLIENT == pmix_globals.proc_type) {
+        if (NULL == evar) {
+            /* preferentially take v2 */
+            if (NULL != (p = getenv("PMIX_SERVER_URI2_USOCK"))) {
+                protocol = PMIX_PROTOCOL_V2_USOCK;
+            } else if (NULL != (p = getenv("PMIX_SERVER_URI"))) {
+                protocol = PMIX_PROTOCOL_V2_USOCK;
+            } else {
+                /* not us */
+                return PMIX_ERR_NOT_SUPPORTED;
+            }
+            evar = strdup(p);
+        }
+    } else if (PMIX_PROC_TOOL == pmix_globals.proc_type) {
+        protocol = PMIX_PROTOCOL_V2_USOCK;
+        /* if we were not given a URI, then we have to look */
+        if (NULL == evar) {
+            /* if we got the URI thru an MCA param, then look no further */
+            if (NULL != mca_ptl_usock_component.uri) {
+                evar = strdup(mca_ptl_usock_component.uri);
+            } else {
+                /* we have to discover the connection info,
+                 * if possible, based on any directives that
+                 * were provided */
+                if (system || system_first) {
+                    tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SYSTEM_TMPDIR);
+                    if (NULL == tmpdir) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    filename = pmix_os_path(false, tmpdir, "usock-contact.txt", NULL);
+                    free(tmpdir);
+                    if (NULL == filename) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    fp = fopen(filename, "r");
+                    free(filename);
+                    if (NULL == fp) {
+                        /* if we are directed to connect only to the system-level
+                         * server, then we can't reach it */
+                        if (!system_first) {
+                            return PMIX_ERR_UNREACH;
+                        }
+                    }
+                }
+                if (NULL == fp) {
+                    /* if we get here, then we are looking for a connection to the
+                     * local non-system server */
+                    tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SERVER_TMPDIR);
+                    if (NULL == tmpdir) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    filename = pmix_os_path(false, tmpdir, "pmix-contact.txt", NULL);
+                    free(tmpdir);
+                    if (NULL == filename) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    fp = fopen(filename, "r");
+                    free(filename);
+                    if (NULL == fp) {
+                        /* if we cannot open the file, then the server must not
+                         * be configured to support tool connections - so abort */
+                        return PMIX_ERR_UNREACH;
+                    }
+                }
+                /* get the URI */
+                evar = pmix_getline(fp);
+                fclose(fp);
+                if (NULL == evar) {
+                    PMIX_ERROR_LOG(PMIX_ERR_FILE_READ_FAILURE);
+                    return PMIX_ERR_UNREACH;
+                }
+            }
+        }
     }
+
     uri = pmix_argv_split(evar, ':');
     if (3 != pmix_argv_count(uri)) {
         pmix_argv_free(uri);
@@ -124,8 +236,8 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
     pmix_client_globals.myserver.info->rank = strtoull(uri[1], NULL, 10);
 
     /* setup the path to the daemon rendezvous point */
-    memset(&mca_ptl_usock_component.connection, 0, sizeof(struct sockaddr_storage));
-    address = (struct sockaddr_un*)&mca_ptl_usock_component.connection;
+    memset(&connection, 0, sizeof(struct sockaddr_storage));
+    address = (struct sockaddr_un*)&connection;
     address->sun_family = AF_UNIX;
     snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", uri[2]);
     /* if the rendezvous file doesn't exist, that's an error */
@@ -137,20 +249,20 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
 
     /* establish the connection */
     len = sizeof(struct sockaddr_un);
-    if (PMIX_SUCCESS != (rc = pmix_ptl_base_connect(&mca_ptl_usock_component.connection, len, &sd))) {
+    if (PMIX_SUCCESS != (rc = pmix_ptl_base_connect(&connection, len, &sd))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
     pmix_client_globals.myserver.sd = sd;
 
     /* send our identity and any authentication credentials to the server */
-    if (PMIX_SUCCESS != (rc = send_connect_ack(sd))) {
+    if (PMIX_SUCCESS != (rc = send_connect_ack(sd, protocol))) {
         CLOSE_THE_SOCKET(sd);
         return rc;
     }
 
     /* do whatever handshake is required */
-    if (PMIX_SUCCESS != (rc = recv_connect_ack(sd))) {
+    if (PMIX_SUCCESS != (rc = recv_connect_ack(sd, protocol))) {
         CLOSE_THE_SOCKET(sd);
         return rc;
     }
@@ -223,12 +335,12 @@ static pmix_status_t send_oneway(struct pmix_peer_t *peer,
     return PMIX_SUCCESS;
 }
 
-static pmix_status_t send_connect_ack(int sd)
+static pmix_status_t send_connect_ack(int sd, pmix_listener_protocol_t protocol)
 {
     char *msg;
     pmix_usock_hdr_t hdr;
     size_t sdsize=0, csize=0, len;
-    char *cred = NULL;
+    char *cred = NULL, *sec = NULL, *bfrop = NULL;
     pmix_status_t rc;
 
     pmix_output_verbose(2, pmix_globals.debug_output,
@@ -239,18 +351,39 @@ static pmix_status_t send_connect_ack(int sd)
     hdr.pindex = -1;
     hdr.tag = UINT32_MAX;
 
-    /* reserve space for the nspace and rank info */
-    sdsize = strlen(pmix_globals.myid.nspace) + 1 + sizeof(int);
+    /* reserve space for the nspace and rank info and the version */
+    sdsize = strlen(pmix_globals.myid.nspace) + 1 + sizeof(int) + strlen(PMIX_VERSION) + 1;  // must NULL terminate the strings!
+
+    /* if we are connected to a v1.x server, then we do not
+     * send our psec module info - that version just assumes
+     * that the module was set by config. For all other versions,
+     * we do send it */
+    if (PMIX_PROTOCOL_V2_USOCK == protocol) {
+        if (PMIX_PROC_IS_CLIENT) {
+           /* add our active sec module info */
+            sec = strdup(pmix_globals.mypeer->compat.psec->name);
+            /* and our active bfrop module info */
+            bfrop = strdup(pmix_globals.mypeer->compat.bfrops->version);
+        } else {
+            /* we are a tool, so we send our available modules
+             * and let the server pick which one we will use */
+            sec = pmix_psec.get_available_modules();
+            bfrop = pmix_bfrops.get_available_modules();
+        }
+        sdsize += strlen(sec) + 1 + strlen(bfrop) + 1;  // must NULL terminate the strings!
+        /* save room for the buffer type */
+        sdsize += sizeof(pmix_bfrop_buffer_type_t);
+    }
 
     /* get a credential, if the security system provides one. Not
-     * every SPC will do so, thus we must first check */
+     * every psec component will do so, thus we must first check */
     if (PMIX_SUCCESS != (rc = pmix_psec.create_cred(&pmix_client_globals.myserver,
-                                                    PMIX_PROTOCOL_V1, &cred, &len))) {
+                                                    protocol, &cred, &len))) {
         return rc;
     }
 
     /* set the number of bytes to be read beyond the header */
-    hdr.nbytes = sdsize + strlen(PMIX_VERSION) + 1 + len;  // must NULL terminate the VERSION string!
+    hdr.nbytes = sdsize + len;
 
     /* create a space for our message */
     sdsize = (sizeof(hdr) + hdr.nbytes);
@@ -272,6 +405,17 @@ static pmix_status_t send_connect_ack(int sd)
     csize += sizeof(int);
     memcpy(msg+csize, PMIX_VERSION, strlen(PMIX_VERSION));
     csize += strlen(PMIX_VERSION)+1;
+    if (PMIX_PROTOCOL_V2_USOCK == protocol) {
+        /* start by loading in the security module */
+        memcpy(msg+csize, sec, strlen(sec));
+        csize += strlen(sec) + 1;
+        /* add the bfrops module */
+        memcpy(msg+csize, bfrop, strlen(bfrop));
+        csize += strlen(bfrop) + 1;
+        /* and finally the buffer type */
+        memcpy(msg+csize, &pmix_bfrops_globals.default_type, sizeof(pmix_bfrop_buffer_type_t));
+        csize += sizeof(pmix_bfrop_buffer_type_t);
+    }
     if (NULL != cred) {
         memcpy(msg+csize, cred, strlen(cred));  // leaves last position in msg set to NULL
     }
@@ -293,7 +437,7 @@ static pmix_status_t send_connect_ack(int sd)
 /* we receive a connection acknowledgement from the server,
  * consisting of nothing more than a status report. If success,
  * then we initiate authentication method */
-static pmix_status_t recv_connect_ack(int sd)
+static pmix_status_t recv_connect_ack(int sd, pmix_listener_protocol_t protocol)
 {
     pmix_status_t reply;
     pmix_status_t rc;

@@ -15,7 +15,7 @@
  * Copyright (c) 2009      Oak Ridge National Labs.  All rights reserved.
  * Copyright (c) 2010-2015 Los Alamos National Security, LLC.
  *                         All rights reserved.
- * Copyright (c) 2013-2016 Intel, Inc. All rights reserved
+ * Copyright (c) 2013-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * $COPYRIGHT$
@@ -41,6 +41,7 @@
 #include "src/util/show_help.h"
 #include "src/mca/base/base.h"
 #include "src/mca/base/pmix_mca_base_var.h"
+#include "src/mca/bfrops/base/base.h"
 #include "src/mca/pif/base/base.h"
 #include "src/mca/pinstalldirs/base/base.h"
 #include "src/mca/psec/base/base.h"
@@ -50,7 +51,6 @@
 #include "src/include/types.h"
 #include "src/util/error.h"
 #include "src/util/keyval_parse.h"
-#include "src/buffer_ops/buffer_ops.h"
 
 #include "src/runtime/pmix_rte.h"
 #include "src/runtime/pmix_progress_threads.h"
@@ -177,11 +177,20 @@ int pmix_rte_init(pmix_proc_type_t type,
             }
         }
     }
-    pmix_bfrop_open();
 
     /* the choice of modules to use when communicating with a peer
      * will be done by the individual init functions and at the
      * time of connection to that peer */
+
+    /* open the bfrops and select the active plugins */
+    if( PMIX_SUCCESS != (ret = pmix_mca_base_framework_open(&pmix_bfrops_base_framework, 0)) ) {
+        error = "pmix_bfrops_base_open";
+        goto return_error;
+    }
+    if( PMIX_SUCCESS != (ret = pmix_bfrop_base_select()) ) {
+        error = "pmix_bfrops_base_select";
+        goto return_error;
+    }
 
     /* open the ptl and select the active plugins */
     if( PMIX_SUCCESS != (ret = pmix_mca_base_framework_open(&pmix_ptl_base_framework, 0)) ) {

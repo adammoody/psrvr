@@ -21,8 +21,8 @@
  * $HEADER$
  *
  */
-#ifndef PMIX_BFROP_BASE_H_
-#define PMIX_BFROP_BASE_H_
+#ifndef PMIX_PSEC_BASE_H_
+#define PMIX_PSEC_BASE_H_
 
 #include <src/include/pmix_config.h>
 

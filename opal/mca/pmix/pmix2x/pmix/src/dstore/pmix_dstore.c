@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2016      Mellanox Technologies, Inc.
  *                         All rights reserved.
- * Copyright (c) 2016      Intel, Inc.  All rights reserved.
+ * Copyright (c) 2017      Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -57,23 +57,27 @@ void pmix_dstore_finalize(void)
     return ;
 }
 
-int pmix_dstore_store(const char *nspace, pmix_rank_t rank, pmix_kval_t *kv)
+int pmix_dstore_store(pmix_peer_t *peer,
+                      const char *nspace,
+                      pmix_rank_t rank,
+                      pmix_kval_t *kv)
 {
     if (!pmix_dstore.store) {
         return PMIX_ERR_NOT_SUPPORTED;
     }
 
-    return pmix_dstore.store(nspace, rank, kv);
+    return pmix_dstore.store(peer, nspace, rank, kv);
 }
 
-int pmix_dstore_fetch(const char *nspace, pmix_rank_t rank,
+int pmix_dstore_fetch(pmix_peer_t *peer,
+                      const char *nspace, pmix_rank_t rank,
                       const char *key, pmix_value_t **kvs)
 {
     if (!pmix_dstore.fetch) {
         return PMIX_ERR_NOT_SUPPORTED;
     }
 
-    return pmix_dstore.fetch(nspace, rank, key, kvs);
+    return pmix_dstore.fetch(peer, nspace, rank, key, kvs);
 }
 
 int pmix_dstore_patch_env(const char *nspace, char ***env)

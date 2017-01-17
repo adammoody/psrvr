@@ -26,8 +26,7 @@
 #include "src/include/pmix_globals.h"
 
 #include "src/class/pmix_value_array.h"
-#include "src/buffer_ops/buffer_ops.h"
-#include "src/buffer_ops/types.h"
+#include "src/mca/bfrops/bfrops_types.h"
 #include "src/util/pmix_environ.h"
 #include "src/util/hash.h"
 #include "src/util/error.h"
@@ -39,8 +38,8 @@
 
 static int _esh_init(pmix_info_t info[], size_t ninfo);
 static int _esh_finalize(void);
-static int _esh_store(const char *nspace, pmix_rank_t rank, pmix_kval_t *kv);
-static int _esh_fetch(const char *nspace, pmix_rank_t rank, const char *key, pmix_value_t **kvs);
+static int _esh_store(pmix_peer_t *peer, const char *nspace, pmix_rank_t rank, pmix_kval_t *kv);
+static int _esh_fetch(pmix_peer_t *peer, const char *nspace, pmix_rank_t rank, const char *key, pmix_value_t **kvs);
 static int _esh_patch_env(const char *nspace, char ***env);
 static int _esh_nspace_add(const char *nspace, pmix_info_t info[], size_t ninfo);
 static int _esh_nspace_del(const char *nspace);
@@ -167,7 +166,7 @@ __extension__ ({                                            \
 #define ESH_INIT_SESSION_TBL_SIZE 2
 #define ESH_INIT_NS_MAP_TBL_SIZE  2
 
-static int _store_data_for_rank(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_buffer_t *buf);
+static int _store_data_for_rank(pmix_peer_t *peer, ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_buffer_t *buf);
 static seg_desc_t *_create_new_segment(segment_type type, const ns_map_data_t *ns_map, uint32_t id);
 static seg_desc_t *_attach_new_segment(segment_type type, const ns_map_data_t *ns_map, uint32_t id);
 static int _update_ns_elem(ns_track_elem_t *ns_elem, ns_seg_info_t *info);
@@ -862,7 +861,10 @@ int _esh_finalize(void)
     return rc;
 }
 
-int _esh_store(const char *nspace, pmix_rank_t rank, pmix_kval_t *kv)
+int _esh_store(pmix_peer_t *peer,
+               const char *nspace,
+               pmix_rank_t rank,
+               pmix_kval_t *kv)
 {
     pmix_status_t rc = PMIX_SUCCESS, tmp_rc;
     ns_track_elem_t *elem;
@@ -935,15 +937,15 @@ int _esh_store(const char *nspace, pmix_rank_t rank, pmix_kval_t *kv)
 
     /* Now we know info about meta segment for this namespace. If meta segment
      * is not empty, then we look for data for the target rank. If they present, replace it. */
-    PMIX_CONSTRUCT(&pbkt, pmix_buffer_t);
-    PMIX_CONSTRUCT(&xfer, pmix_buffer_t);
+    pmix_bfrops.construct_buffer(peer, &pbkt);
+    pmix_bfrops.construct_buffer(peer, &xfer);
     PMIX_LOAD_BUFFER(&xfer, kv->value->data.bo.bytes, kv->value->data.bo.size);
     pmix_buffer_t *pxfer = &xfer;
-    pmix_bfrop.pack(&pbkt, &pxfer, 1, PMIX_BUFFER);
+    pmix_bfrops.pack(peer, &pbkt, &pxfer, 1, PMIX_BUFFER);
     xfer.base_ptr = NULL;
     xfer.bytes_used = 0;
 
-    rc = _store_data_for_rank(elem, rank, &pbkt);
+    rc = _store_data_for_rank(peer, elem, rank, &pbkt);
     PMIX_DESTRUCT(&xfer);
     PMIX_DESTRUCT(&pbkt);
 
@@ -970,7 +972,9 @@ err_exit:
  * See return codes description for the corresponding function
  * in pmix_dstore.h
  */
-int _esh_fetch(const char *nspace, pmix_rank_t rank, const char *key, pmix_value_t **kvs)
+static int _esh_fetch(pmix_peer_t *peer,
+                      const char *nspace, pmix_rank_t rank,
+                      const char *key, pmix_value_t **kvs)
 {
     ns_seg_info_t *ns_info = NULL;
     pmix_status_t rc = PMIX_ERROR, lock_rc;
@@ -1148,16 +1152,16 @@ int _esh_fetch(const char *nspace, pmix_rank_t rank, const char *key, pmix_value
                 /* target key is found, get value */
                 uint8_t *data_ptr = ESH_DATA_PTR(addr);
                 size_t data_size = ESH_DATA_SIZE(addr, data_ptr);
-                PMIX_CONSTRUCT(&buffer, pmix_buffer_t);
+                pmix_bfrops.construct_buffer(peer, &buffer);
                 PMIX_LOAD_BUFFER(&buffer, data_ptr, data_size);
                 int cnt = 1;
                 /* unpack value for this key from the buffer. */
                 PMIX_VALUE_CONSTRUCT(&val);
-                if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(&buffer, &val, &cnt, PMIX_VALUE))) {
+                if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, &buffer, &val, &cnt, PMIX_VALUE))) {
                     PMIX_ERROR_LOG(rc);
                     goto done;
                 }
-                if (PMIX_SUCCESS != (rc = pmix_bfrop.copy((void**)kvs, &val, PMIX_VALUE))) {
+                if (PMIX_SUCCESS != (rc = pmix_bfrops.copy(peer, (void**)kvs, &val, PMIX_VALUE))) {
                     PMIX_ERROR_LOG(rc);
                     goto done;
                 }
@@ -2024,7 +2028,9 @@ static size_t put_data_to_the_end(ns_track_elem_t *ns_info, seg_desc_t *dataseg,
     return global_offset;
 }
 
-static int pmix_sm_store(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_kval_t *kval, rank_meta_info **rinfo, int data_exist)
+static int pmix_sm_store(pmix_peer_t *peer,
+                         ns_track_elem_t *ns_info, pmix_rank_t rank,
+                         pmix_kval_t *kval, rank_meta_info **rinfo, int data_exist)
 {
     size_t offset, size, kval_cnt;
     pmix_buffer_t *buffer;
@@ -2039,7 +2045,7 @@ static int pmix_sm_store(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_kval_t
     datadesc = ns_info->data_seg;
     /* pack value to the buffer */
     buffer = PMIX_NEW(pmix_buffer_t);
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(buffer, kval->value, 1, PMIX_VALUE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(peer, buffer, kval->value, 1, PMIX_VALUE))) {
         PMIX_RELEASE(buffer);
         PMIX_ERROR_LOG(rc);
         return rc;
@@ -2205,7 +2211,9 @@ static int pmix_sm_store(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_kval_t
     return rc;
 }
 
-static int _store_data_for_rank(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix_buffer_t *buf)
+static int _store_data_for_rank(pmix_peer_t *peer,
+                                ns_track_elem_t *ns_info, pmix_rank_t rank,
+                                pmix_buffer_t *buf)
 {
     pmix_status_t rc;
     int32_t cnt;
@@ -2247,13 +2255,13 @@ static int _store_data_for_rank(ns_track_elem_t *ns_info, pmix_rank_t rank, pmix
      */
     cnt = 1;
     free_offset = get_free_offset(datadesc);
-    while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(buf, &bptr, &cnt, PMIX_BUFFER))) {
+    while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(peer, buf, &bptr, &cnt, PMIX_BUFFER))) {
         cnt = 1;
         kp = PMIX_NEW(pmix_kval_t);
-        while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(bptr, kp, &cnt, PMIX_KVAL))) {
+        while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(peer, bptr, kp, &cnt, PMIX_KVAL))) {
             pmix_output_verbose(2, pmix_globals.debug_output,
                                 "pmix: unpacked key %s", kp->key);
-            if (PMIX_SUCCESS != (rc = pmix_sm_store(ns_info, rank, kp, &rinfo, data_exist))) {
+            if (PMIX_SUCCESS != (rc = pmix_sm_store(peer, ns_info, rank, kp, &rinfo, data_exist))) {
                 PMIX_ERROR_LOG(rc);
                 return rc;
             }

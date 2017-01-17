@@ -15,6 +15,11 @@
 #define PMIX_SERVER_OPS_H
 
 #include <src/include/pmix_config.h>
+#include <src/include/types.h>
+#include <src/include/pmix_globals.h>
+
+#include PMIX_EVENT_HEADER
+#include PMIX_EVENT2_THREAD_HEADER
 
 #include <pmix_common.h>
 #include <src/class/pmix_ring_buffer.h>
@@ -107,7 +112,7 @@ typedef struct {
     pmix_list_t collectives;                // list of active pmix_server_trkr_t
     pmix_list_t remote_pnd;                 // list of pmix_dmdx_remote_t awaiting arrival of data fror servicing remote req's
     pmix_list_t local_reqs;                 // list of pmix_dmdx_local_t awaiting arrival of data from local neighbours
-    pmix_buffer_t gdata;                    // cache of data given to me for passing to all clients
+    pmix_list_t gdata;                      // list of pmix_kval_t cache of data given to me for passing to all clients
     pmix_list_t events;                     // list of pmix_regevents_info_t registered events
     pmix_ring_buffer_t notifications;       // ring buffer of pending notifications
     bool tool_connections_allowed;
@@ -182,7 +187,8 @@ pmix_status_t pmix_server_connect(pmix_server_caddy_t *cd,
                                   pmix_buffer_t *buf, bool disconnect,
                                   pmix_op_cbfunc_t cbfunc);
 
-void pmix_pack_proc_map(pmix_buffer_t *buf,
+void pmix_pack_proc_map(pmix_peer_t *peer,
+                        pmix_buffer_t *buf,
                         char **nodes, char **procs);
 pmix_status_t pmix_regex_parse_nodes(const char *regexp, char ***names);
 pmix_status_t pmix_regex_parse_procs(const char *regexp, char ***procs);
@@ -216,6 +222,9 @@ pmix_status_t pmix_server_event_recvd_from_client(pmix_peer_t *peer,
                                                   pmix_op_cbfunc_t cbfunc,
                                                   void *cbdata);
 void pmix_server_execute_collective(int sd, short args, void *cbdata);
+pmix_status_t pmix_pack_job_data_request(pmix_buffer_t *bfr,
+                                         pmix_peer_t *peer,
+                                         bool remote_request);
 
 PMIX_EXPORT extern pmix_server_module_t pmix_host_server;
 PMIX_EXPORT extern pmix_server_globals_t pmix_server_globals;

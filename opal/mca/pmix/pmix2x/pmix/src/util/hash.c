@@ -6,7 +6,7 @@
  *                         reserved.
  * Copyright (c) 2011-2014 Los Alamos National Security, LLC.  All rights
  *                         reserved.
- * Copyright (c) 2014-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * Copyright (c) 2016      Mellanox Technologies, Inc.
@@ -30,7 +30,7 @@
 #include "src/include/pmix_globals.h"
 #include "src/class/pmix_hash_table.h"
 #include "src/class/pmix_pointer_array.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/bfrops_types.h"
 #include "src/util/error.h"
 #include "src/util/output.h"
 
@@ -104,6 +104,9 @@ pmix_status_t pmix_hash_fetch(pmix_hash_table_t *table, pmix_rank_t rank,
     pmix_status_t rc = PMIX_SUCCESS;
     pmix_proc_data_t *proc_data;
     pmix_kval_t *hv;
+    pmix_value_t *val;
+    pmix_info_t *info;
+    size_t ninfo, n;
     uint64_t id;
     char *node;
 
@@ -143,13 +146,36 @@ pmix_status_t pmix_hash_fetch(pmix_hash_table_t *table, pmix_rank_t rank,
         if (NULL == key) {
             /* we will return the data as an array of pmix_info_t
              * in the kvs pmix_value_t */
-
+            PMIX_VALUE_CREATE(val, 1);
+            val->type = PMIX_DATA_ARRAY;
+            val->data.darray = (pmix_data_array_t*)malloc(sizeof(pmix_data_array_t));
+            if (NULL == val->data.darray) {
+                return PMIX_ERR_NOMEM;
+            }
+            val->data.darray->type = PMIX_INFO;
+            ninfo = pmix_list_get_size(&proc_data->data);
+            PMIX_INFO_CREATE(info, ninfo);
+            if (NULL == info) {
+                PMIX_VALUE_FREE(val, 1);
+                return PMIX_ERR_NOMEM;
+            }
+            n = 0;
+            PMIX_LIST_FOREACH(hv, &proc_data->data, pmix_kval_t) {
+                (void)strncpy(info[n].key, hv->key, PMIX_MAX_KEYLEN);
+                pmix_bfrops.value_xfer(pmix_globals.mypeer, &info[n].value, hv->value);
+                ++n;
+            }
+            val->data.darray->size = ninfo;
+            val->data.darray->array = info;
+            *kvs = val;
+            return PMIX_SUCCESS;
         } else {
             /* find the value from within this proc_data object */
             hv = lookup_keyval(&proc_data->data, key);
             if (NULL != hv) {
                 /* create the copy */
-                if (PMIX_SUCCESS != (rc = pmix_bfrop.copy((void**)kvs, hv->value, PMIX_VALUE))) {
+                if (PMIX_SUCCESS != (rc = pmix_bfrops.copy(pmix_globals.mypeer,
+                                                           (void**)kvs, hv->value, PMIX_VALUE))) {
                     PMIX_ERROR_LOG(rc);
                     return rc;
                 }
@@ -215,7 +241,8 @@ pmix_status_t pmix_hash_fetch_by_key(pmix_hash_table_t *table, const char *key,
     hv = lookup_keyval(&proc_data->data, key_r);
     if (hv) {
         /* create the copy */
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.copy((void**)kvs, hv->value, PMIX_VALUE))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.copy(pmix_globals.mypeer,
+                                                   (void**)kvs, hv->value, PMIX_VALUE))) {
             PMIX_ERROR_LOG(rc);
             return rc;
         }

@@ -116,9 +116,10 @@ typedef uint32_t pmix_rank_t;
 #define PMIX_SERVER_PIDINFO                 "pmix.srvr.pidinfo"     // (pid_t) pid of the target server
 #define PMIX_SERVER_HOSTNAME                "pmix.srvr.host"        // (char*) node where target server is located
 #define PMIX_SERVER_TMPDIR                  "pmix.srvr.tmpdir"      // (char*) temp directory where PMIx server will place
-                                                                    //        client rendezvous points and contact info
-#define PMIX_SYSTEM_TMPDIR                  "pmix.sys.tmpdir"       // (char*) temp directory for this system, where PMIx
-                                                                    //        server will place tool rendezvous points and contact info
+                                                                    //         client rendezvous points and contact info
+#define PMIX_SYSTEM_TMPDIR                  "pmix.sys.tmpdir"       // (char*) temp directory for this system - if told to provide tool support,
+                                                                    //         PMIx server will place tool rendezvous points and contact info
+                                                                    //         under this directory/pmix
 #define PMIX_CONNECT_TO_SYSTEM              "pmix.cnct.sys"         // (bool) The requestor requires that a connection be made only to
                                                                     //        a local system-level PMIx server
 #define PMIX_CONNECT_SYSTEM_FIRST           "pmix.cnct.sys.first"   // (bool) Preferentially look for a system-level PMIx server first
@@ -129,13 +130,25 @@ typedef uint32_t pmix_rank_t;
 #define PMIX_GRPID                          "pmix.egid"             // (uint32_t) effective group id
 #define PMIX_DSTPATH                        "pmix.dstpath"          // (char*) path to dstore files
 #define PMIX_VERSION_INFO                   "pmix.version"          // (char*) PMIx version of contactor
-
+#define PMIX_VERSION_INFO                   "pmix.version"          // (char*) PMIx version of contactor
 
 /* attributes for the USOCK rendezvous socket  */
-#define PMIX_USOCK_DISABLE                  "pmix.usock.disable"    // (bool) disable legacy usock support
+#define PMIX_USOCK_DISABLE                  "pmix.usock.disable"    // (bool) disable usock support
+#define PMIX_USOCK_DISABLE_V1               "pmix.usock.disv1"      // (bool) disable legacy usock support
+#define PMIX_USOCK_DISABLE_V2               "pmix.usock.disv2"      // (bool) disable v2 usock support
+#define PMIX_USOCK_URI                      "pmix.usock.uri"        // (char*) URI of server to connect to
 #define PMIX_SOCKET_MODE                    "pmix.sockmode"         // (uint32_t) POSIX mode_t (9 bits valid)
 #define PMIX_SINGLE_LISTENER                "pmix.sing.listnr"      // (bool) use only one rendezvous socket, letting priorities and/or
                                                                     //        MCA param select the active transport
+/* attributes for TCP connections */
+#define PMIX_TCP_DISABLE                    "pmix.tcp.disable"      // (bool) disable tcp support
+#define PMIX_TCP_URI                        "pmix.tcp.uri"          // (char*) URI of server to connect to
+#define PMIX_TCP_IF_INCLUDE                 "pmix.tcp.ifinclude"    // (char*) comma-delimited list of devices and/or CIDR notation
+#define PMIX_TCP_IF_EXCLUDE                 "pmix.tcp.ifexclude"    // (char*) comma-delimited list of devices and/or CIDR notation
+#define PMIX_TCP_IPV4_PORT                  "pmix.tcp.ipv4"         // (int) IPv4 port to be used
+#define PMIX_TCP_IPV6_PORT                  "pmix.tcp.ipv6"         // (int) IPv6 port to be used
+#define PMIX_TCP_DISABLE_IPV4               "pmix.tcp.disipv4"      // (bool) true to disable IPv4 family
+#define PMIX_TCP_DISABLE_IPV6               "pmix.tcp.disipv6"      // (bool) true to disable IPv6 family
 
 /* attributes for TCP connections */
 #define PMIX_TCP_URI                        "pmix.tcp.uri"          // (char*) URI of server to connect to

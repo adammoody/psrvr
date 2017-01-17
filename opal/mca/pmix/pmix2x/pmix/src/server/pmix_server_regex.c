@@ -1,6 +1,6 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
- * Copyright (c) 2014-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2015 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * Copyright (c) 2014      Artem Y. Polyakov <artpol84@gmail.com>.
@@ -36,7 +36,7 @@
 #include <ctype.h>
 
 #include "src/class/pmix_list.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/bfrops.h"
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/output.h"
@@ -59,9 +59,11 @@ static pmix_status_t pmix_regex_extract_ppn(char *regexp, char ***procs);
  *
  * (c) the list of procs on each node for reverse lookup
  */
-void pmix_pack_proc_map(pmix_buffer_t *buf,
+void pmix_pack_proc_map(struct pmix_peer_t *pr,
+                        pmix_buffer_t *buf,
                         char **nodes, char **procs)
 {
+    pmix_peer_t *peer = (pmix_peer_t*)pr;
     pmix_kval_t kv;
     pmix_value_t val;
     pmix_status_t rc;
@@ -81,7 +83,7 @@ void pmix_pack_proc_map(pmix_buffer_t *buf,
 
     /* pass the number of nodes involved in this namespace */
     nnodes = pmix_argv_count(nodes);
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(&buf2, &nnodes, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(peer, &buf2, &nnodes, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         goto cleanup;
     }
@@ -90,7 +92,7 @@ void pmix_pack_proc_map(pmix_buffer_t *buf,
         /* pass the complete list of procs on this node */
         kv.key = nodes[i];
         val.data.string = procs[i];
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(&buf2, &kv, 1, PMIX_KVAL))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(peer, &buf2, &kv, 1, PMIX_KVAL))) {
             PMIX_ERROR_LOG(rc);
             kv.key = NULL;
             val.data.string = NULL;
@@ -105,7 +107,7 @@ void pmix_pack_proc_map(pmix_buffer_t *buf,
     val.type = PMIX_BYTE_OBJECT;
     val.data.bo.bytes = buf2.base_ptr;
     val.data.bo.size = buf2.bytes_used;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(buf, &kv, 1, PMIX_KVAL))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(peer, buf, &kv, 1, PMIX_KVAL))) {
         PMIX_ERROR_LOG(rc);
     }
     kv.key = NULL;

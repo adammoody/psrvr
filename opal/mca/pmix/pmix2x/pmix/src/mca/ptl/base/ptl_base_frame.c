@@ -40,6 +40,9 @@
 #include "src/mca/base/pmix_mca_base_framework.h"
 #include "src/class/pmix_list.h"
 #include "src/client/pmix_client_ops.h"
+#include "src/util/basename.h"
+#include "src/util/os_dirpath.h"
+#include "src/util/os_path.h"
 #include "src/mca/ptl/base/base.h"
 
 /*
@@ -200,6 +203,8 @@ PMIX_EXPORT PMIX_CLASS_INSTANCE(pmix_pending_connection_t,
 static void lcon(pmix_listener_t *p)
 {
     p->socket = -1;
+    p->filename = NULL;
+    memset(&p->connection, 0, sizeof(struct sockaddr_storage));
     p->varname = NULL;
     p->uri = NULL;
     p->owner_given = false;
@@ -208,6 +213,22 @@ static void lcon(pmix_listener_t *p)
 }
 static void ldes(pmix_listener_t *p)
 {
+    char *dir;
+
+    if (NULL != p->filename) {
+        /* save the directory name */
+        dir = pmix_dirname(p->filename);
+        /* remove the file */
+        unlink(p->filename);
+        free(p->filename);
+        if (NULL != dir) {
+            /* if the directory is empty, remove it */
+            if (pmix_os_dirpath_is_empty(dir)) {
+                pmix_os_dirpath_destroy(dir, true, NULL);
+                free(dir);
+            }
+        }
+    }
     if (0 <= p->socket) {
         CLOSE_THE_SOCKET(p->socket);
     }

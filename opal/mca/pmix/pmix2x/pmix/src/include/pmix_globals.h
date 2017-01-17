@@ -9,7 +9,7 @@
  *                         University of Stuttgart.  All rights reserved.
  * Copyright (c) 2004-2005 The Regents of the University of California.
  *                         All rights reserved.
- * Copyright (c) 2014-2016 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -32,7 +32,7 @@
 
 #include <pmix_common.h>
 
-#include "src/buffer_ops/types.h"
+#include "src/mca/bfrops/bfrops.h"
 #include "src/class/pmix_hash_table.h"
 #include "src/class/pmix_list.h"
 #include "src/event/pmix_event.h"
@@ -99,16 +99,6 @@ typedef enum {
 #define PMIX_PROC_IS_TOOL       (PMIX_PROC_TOOL == pmix_globals.proc_type)
 
 
-/* internally used object for transferring data
- * to/from the server and for storing in the
- * hash tables */
-typedef struct {
-    pmix_list_item_t super;
-    char *key;
-    pmix_value_t *value;
-} pmix_kval_t;
-PMIX_CLASS_DECLARATION(pmix_kval_t);
-
 // forward declaration
 struct pmix_peer_t;
 
@@ -118,7 +108,9 @@ typedef struct {
     pmix_object_t super;
     size_t nlocalprocs;
     bool all_registered;         // all local ranks have been defined
-    pmix_buffer_t job_info;      // packed copy of the job-level info to be delivered to each proc
+    bool nodata;                 // indicates whether or not to store job-level data in shared memory
+    bool data_stored;            // job-level data has already been stored in shared memory
+    pmix_list_t info;            // copy of the job-level info to be delivered to each proc
     pmix_list_t ranks;           // list of pmix_rank_info_t for connection support of my clients
     pmix_hash_table_t mylocal;   // hash_table for storing data PUT with local/global scope by my clients
     pmix_hash_table_t myremote;  // hash_table for storing data PUT with remote/global scope by my clients
@@ -138,6 +130,7 @@ PMIX_CLASS_DECLARATION(pmix_nspace_t);
 
 typedef struct pmix_rank_info_t {
     pmix_list_item_t super;
+    struct pmix_peer_t *peer;
     pmix_nspace_t *nptr;
     pmix_rank_t rank;
     uid_t uid;
@@ -151,6 +144,8 @@ PMIX_CLASS_DECLARATION(pmix_rank_info_t);
 /* define a structure for holding personality pointers
  * to plugins for cross-version support */
 typedef struct pmix_personality_t {
+    pmix_bfrop_buffer_type_t type;
+    pmix_bfrops_module_t *bfrops;
     pmix_psec_module_t *psec;
     pmix_ptl_module_t *ptl;
 } pmix_personality_t;
@@ -222,6 +217,7 @@ PMIX_CLASS_DECLARATION(pmix_query_caddy_t);
 typedef struct {
     pmix_list_item_t super;
     pmix_cmd_t type;
+    bool hybrid;                    // true if participating procs are from more than one nspace
     pmix_proc_t *pcs;               // copy of the original array of participants
     size_t   npcs;                  // number of procs in the array
     volatile bool active;           // flag for waiting for completion
@@ -238,7 +234,8 @@ typedef struct {
 } pmix_server_trkr_t;
 PMIX_CLASS_DECLARATION(pmix_server_trkr_t);
 
-typedef int (*pmix_store_dstor_cbfunc_t)(const char *nsname,
+typedef int (*pmix_store_dstor_cbfunc_t)(pmix_peer_t *peer,
+                                         const char *nsname,
                                          pmix_rank_t rank, pmix_kval_t *kv);
 typedef int (*pmix_store_hash_cbfunc_t)(pmix_hash_table_t *table,
                                          pmix_rank_t rank, pmix_kval_t *kv);

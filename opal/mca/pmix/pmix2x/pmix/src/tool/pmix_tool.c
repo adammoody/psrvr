@@ -1,6 +1,6 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
- * Copyright (c) 2014-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014-2016 Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * Copyright (c) 2014      Artem Y. Polyakov <artpol84@gmail.com>.
@@ -61,7 +61,7 @@
 extern pmix_client_globals_t pmix_client_globals;
 
 #include "src/class/pmix_list.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/base/base.h"
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/hash.h"
@@ -101,34 +101,39 @@ static void pmix_tool_notify_recv(struct pmix_peer_t *peer,
     chain->final_cbdata = chain;
 
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &cmd, &cnt, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &cmd, &cnt, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
     /* unpack the status */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &chain->status, &cnt, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &chain->status, &cnt, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
 
     /* unpack the source of the event */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &chain->source, &cnt, PMIX_PROC))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &chain->source, &cnt, PMIX_PROC))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
 
     /* unpack the info that might have been provided */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &chain->ninfo, &cnt, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &chain->ninfo, &cnt, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
     if (0 < chain->ninfo) {
         PMIX_INFO_CREATE(chain->info, chain->ninfo);
         cnt = chain->ninfo;
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, chain->info, &cnt, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                     buf, chain->info, &cnt, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
             goto error;
         }
@@ -203,6 +208,16 @@ PMIX_EXPORT int PMIx_tool_init(pmix_proc_t *proc,
     }
     /* the server will have to use the same */
     pmix_client_globals.myserver.compat.psec = pmix_globals.mypeer->compat.psec;
+
+    /* assign our bfrops module */
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.assign_module(pmix_globals.mypeer, NULL))) {
+        return rc;
+    }
+    /* and set our buffer type */
+    pmix_globals.mypeer->compat.type = pmix_bfrops_globals.default_type;
+    /* the server will be using the same */
+    pmix_client_globals.myserver.compat.bfrops = pmix_globals.mypeer->compat.bfrops;
+    pmix_client_globals.myserver.compat.type = pmix_globals.mypeer->compat.type;
 
     /* connect to the server - returns job info if successful */
     if (PMIX_SUCCESS != (rc = pmix_ptl.connect_to_peer(&pmix_client_globals.myserver, info, ninfo))){
@@ -495,7 +510,8 @@ PMIX_EXPORT pmix_status_t PMIx_tool_finalize(void)
      * server that we are normally terminating */
     msg = PMIX_NEW(pmix_buffer_t);
     /* pack the cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msg, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msg);
         return rc;

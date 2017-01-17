@@ -13,7 +13,7 @@
  *                         All rights reserved.
  * Copyright (c) 2009-2012 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2011      Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * Copyright (c) 2016      IBM Corporation.  All rights reserved.
@@ -39,11 +39,12 @@
 #include <signal.h>
 #include PMIX_EVENT_HEADER
 
+#include "src/class/pmix_list.h"
+#include "src/include/pmix_globals.h"
 #include "src/util/pmix_environ.h"
 #include "src/util/output.h"
 #include "src/util/printf.h"
 #include "src/util/argv.h"
-#include "src/buffer_ops/buffer_ops.h"
 
 static pmix_status_t connected(const pmix_proc_t *proc, void *server_object,
                                pmix_op_cbfunc_t cbfunc, void *cbdata);

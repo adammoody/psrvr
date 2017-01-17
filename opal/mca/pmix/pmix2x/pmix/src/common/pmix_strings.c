@@ -11,7 +11,7 @@
  *                         All rights reserved.
  * Copyright (c) 2007-2012 Los Alamos National Security, LLC.
  *                         All rights reserved.
- * Copyright (c) 2014-2016 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -34,7 +34,7 @@
 #include <pmix_common.h>
 #include <pmix_rename.h>
 
-#include "src/buffer_ops/internal.h"
+#include "src/mca/bfrops/base/base.h"
 #include "src/include/pmix_globals.h"
 
 const char* PMIx_Proc_state_string(pmix_proc_state_t state)
@@ -193,15 +193,22 @@ const char* pmix_command_string(pmix_cmd_t cmd)
     }
 }
 
-const char* PMIx_Data_type_string(pmix_data_type_t type)
+PMIX_EXPORT const char* PMIx_Data_type_string(pmix_data_type_t type)
 {
+    pmix_bfrops_base_active_module_t *active;
     pmix_bfrop_type_info_t *info;
 
-    if (NULL == (info = (pmix_bfrop_type_info_t*)pmix_pointer_array_get_item(&pmix_bfrop_types, type))) {
-        return "UNKNOWN";
+    if (!pmix_bfrops_globals.initialized) {
+        return NULL;
     }
-    if (NULL == info->odti_name) {
-        return "UNKNOWN";
+
+    PMIX_LIST_FOREACH(active, &pmix_bfrops_globals.actives, pmix_bfrops_base_active_module_t) {
+        if (NULL != (info = (pmix_bfrop_type_info_t*)pmix_pointer_array_get_item(&active->component->types, type))) {
+            if (NULL == info->odti_name) {
+                return "UNKNOWN";
+            }
+            return info->odti_name;
+        }
     }
-    return info->odti_name;
+    return "UNKNOWN";
 }

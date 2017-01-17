@@ -16,7 +16,6 @@
 #include "src/client/pmix_client_ops.h"
 #include "src/class/pmix_value_array.h"
 #include "src/util/error.h"
-#include "src/buffer_ops/internal.h"
 #include "src/util/argv.h"
 #include "src/util/compress.h"
 #include "src/util/hash.h"
@@ -26,11 +25,16 @@
 #include "src/dstore/pmix_dstore.h"
 #endif
 
-static inline int _add_key_for_rank(pmix_rank_t rank, pmix_kval_t *kv, void *cbdata);
-static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata);
+static inline int _add_key_for_rank(pmix_peer_t *peer,
+                                    pmix_rank_t rank,
+                                    pmix_kval_t *kv, void *cbdata);
+static inline pmix_status_t _job_data_store(pmix_peer_t *peer,
+                                            const char *nspace, void *cbdata);
 
 
-static inline int _add_key_for_rank(pmix_rank_t rank, pmix_kval_t *kv, void *cbdata)
+static inline int _add_key_for_rank(pmix_peer_t *peer,
+                                    pmix_rank_t rank,
+                                    pmix_kval_t *kv, void *cbdata)
 {
     pmix_job_data_caddy_t *cb = (pmix_job_data_caddy_t*)(cbdata);
     pmix_status_t rc = PMIX_SUCCESS;
@@ -46,7 +50,7 @@ static inline int _add_key_for_rank(pmix_rank_t rank, pmix_kval_t *kv, void *cbd
 
         if ((cur_rank + 1) <= size) {
             tmp = &(PMIX_VALUE_ARRAY_GET_ITEM(cb->bufs, pmix_buffer_t, cur_rank));
-            pmix_bfrop.pack(tmp, kv, 1, PMIX_KVAL);
+            pmix_bfrops.pack(peer, tmp, kv, 1, PMIX_KVAL);
             return rc;
         }
         if (PMIX_SUCCESS != (rc = pmix_value_array_set_size(cb->bufs, cur_rank + 1))) {
@@ -57,7 +61,7 @@ static inline int _add_key_for_rank(pmix_rank_t rank, pmix_kval_t *kv, void *cbd
             tmp = &(PMIX_VALUE_ARRAY_GET_ITEM(cb->bufs, pmix_buffer_t, i));
             PMIX_CONSTRUCT(tmp, pmix_buffer_t);
         }
-        pmix_bfrop.pack(tmp, kv, 1, PMIX_KVAL);
+        pmix_bfrops.pack(peer, tmp, kv, 1, PMIX_KVAL);
     }
 #endif
     if (cb->hstore_fn) {
@@ -69,7 +73,7 @@ static inline int _add_key_for_rank(pmix_rank_t rank, pmix_kval_t *kv, void *cbd
 }
 
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-static inline int _rank_key_dstore_store(void *cbdata)
+static inline int _rank_key_dstore_store(pmix_peer_t *peer, void *cbdata)
 {
     int rc = PMIX_SUCCESS;
     uint32_t i, size;
@@ -93,7 +97,7 @@ static inline int _rank_key_dstore_store(void *cbdata)
         tmp = &(PMIX_VALUE_ARRAY_GET_ITEM(cb->bufs, pmix_buffer_t, i));
         rank = 0 == i ? PMIX_RANK_WILDCARD : i - 1;
         PMIX_UNLOAD_BUFFER(tmp, kv->value->data.bo.bytes, kv->value->data.bo.size);
-        if (PMIX_SUCCESS != (rc = cb->dstore_fn(cb->nsptr->nspace, rank, kv))) {
+        if (PMIX_SUCCESS != (rc = cb->dstore_fn(peer, cb->nsptr->nspace, rank, kv))) {
             PMIX_ERROR_LOG(rc);
             goto exit;
         }
@@ -108,28 +112,33 @@ exit:
 #endif
 
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-pmix_status_t pmix_job_data_dstore_store(const char *nspace, pmix_buffer_t *bptr)
+pmix_status_t pmix_job_data_dstore_store(pmix_peer_t *peer,
+                                         const char *nspace,
+                                         pmix_buffer_t *bptr)
 {
     pmix_job_data_caddy_t *cd = PMIX_NEW(pmix_job_data_caddy_t);
 
     cd->job_data = bptr;
     cd->dstore_fn = pmix_dstore_store;
 
-    return _job_data_store(nspace, cd);
+    return _job_data_store(peer, nspace, cd);
 }
 #endif
 
-pmix_status_t pmix_job_data_htable_store(const char *nspace, pmix_buffer_t *bptr)
+pmix_status_t pmix_job_data_htable_store(pmix_peer_t *peer,
+                                         const char *nspace,
+                                         pmix_buffer_t *bptr)
 {
     pmix_job_data_caddy_t *cb = PMIX_NEW(pmix_job_data_caddy_t);
 
     cb->job_data = bptr;
     cb->hstore_fn = pmix_hash_store;
 
-    return _job_data_store(nspace, cb);
+    return _job_data_store(peer, nspace, cb);
 }
 
-static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
+static inline pmix_status_t _job_data_store(pmix_peer_t *peer,
+                                            const char *nspace, void *cbdata)
 {
     pmix_buffer_t *job_data = ((pmix_job_data_caddy_t*)(cbdata))->job_data;
     pmix_job_data_caddy_t *cb = (pmix_job_data_caddy_t*)(cbdata);
@@ -190,15 +199,15 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
 #endif
     cnt = 1;
     kptr = PMIX_NEW(pmix_kval_t);
-    while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(job_data, kptr, &cnt, PMIX_KVAL)))
+    while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(peer, job_data, kptr, &cnt, PMIX_KVAL)))
     {
         if (0 == strcmp(kptr->key, PMIX_PROC_BLOB)) {
             bo = &(kptr->value->data.bo);
-            PMIX_CONSTRUCT(&buf2, pmix_buffer_t);
+            pmix_bfrops.construct_buffer(peer, &buf2);
             PMIX_LOAD_BUFFER(&buf2, bo->bytes, bo->size);
             /* start by unpacking the rank */
             cnt = 1;
-            if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(&buf2, &rank, &cnt, PMIX_PROC_RANK))) {
+            if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, &buf2, &rank, &cnt, PMIX_PROC_RANK))) {
                 PMIX_ERROR_LOG(rc);
                 PMIX_DESTRUCT(&buf2);
                 goto exit;
@@ -208,7 +217,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
             PMIX_VALUE_CREATE(kp2->value, 1);
             kp2->value->type = PMIX_PROC_RANK;
             kp2->value->data.rank = rank;
-            if (PMIX_SUCCESS != (rc = _add_key_for_rank(rank, kp2, cb))) {
+            if (PMIX_SUCCESS != (rc = _add_key_for_rank(peer, rank, kp2, cb))) {
                 PMIX_ERROR_LOG(rc);
                 PMIX_RELEASE(kp2);
                 PMIX_DESTRUCT(&buf2);
@@ -217,7 +226,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
             PMIX_RELEASE(kp2); // maintain accounting
             cnt = 1;
             kp2 = PMIX_NEW(pmix_kval_t);
-            while (PMIX_SUCCESS == (rc = pmix_bfrop.unpack(&buf2, kp2, &cnt, PMIX_KVAL))) {
+            while (PMIX_SUCCESS == (rc = pmix_bfrops.unpack(peer, &buf2, kp2, &cnt, PMIX_KVAL))) {
                 /* if the value contains a string that is longer than the
                  * limit, then compress it */
                 if (PMIX_STRING_SIZE_CHECK(kp2->value)) {
@@ -235,7 +244,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
                 }
                 /* this is data provided by a job-level exchange, so store it
                  * in the job-level data hash_table */
-                if (PMIX_SUCCESS != (rc = _add_key_for_rank(rank, kp2, cb))) {
+                if (PMIX_SUCCESS != (rc = _add_key_for_rank(peer, rank, kp2, cb))) {
                     PMIX_ERROR_LOG(rc);
                     PMIX_RELEASE(kp2);
                     PMIX_DESTRUCT(&buf2);
@@ -250,11 +259,11 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
         } else if (0 == strcmp(kptr->key, PMIX_MAP_BLOB)) {
             /* transfer the byte object for unpacking */
             bo = &(kptr->value->data.bo);
-            PMIX_CONSTRUCT(&buf2, pmix_buffer_t);
+            pmix_bfrops.construct_buffer(peer, &buf2);
             PMIX_LOAD_BUFFER(&buf2, bo->bytes, bo->size);
             /* start by unpacking the number of nodes */
             cnt = 1;
-            if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(&buf2, &nnodes, &cnt, PMIX_SIZE))) {
+            if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, &buf2, &nnodes, &cnt, PMIX_SIZE))) {
                 PMIX_ERROR_LOG(rc);
                 PMIX_DESTRUCT(&buf2);
                 goto exit;
@@ -263,7 +272,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
             for (i=0; i < nnodes; i++) {
                 cnt = 1;
                 PMIX_CONSTRUCT(&kv, pmix_kval_t);
-                if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(&buf2, &kv, &cnt, PMIX_KVAL))) {
+                if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, &buf2, &kv, &cnt, PMIX_KVAL))) {
                     PMIX_ERROR_LOG(rc);
                     PMIX_DESTRUCT(&buf2);
                     PMIX_DESTRUCT(&kv);
@@ -309,7 +318,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
                 /* split the list of procs so we can store their
                  * individual location data */
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-                if (PMIX_SUCCESS != (rc = _add_key_for_rank(PMIX_RANK_WILDCARD, &kv, cb))) {
+                if (PMIX_SUCCESS != (rc = _add_key_for_rank(peer, PMIX_RANK_WILDCARD, &kv, cb))) {
                     PMIX_ERROR_LOG(rc);
                     PMIX_DESTRUCT(&kv);
                     PMIX_DESTRUCT(&buf2);
@@ -328,7 +337,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
                     kp2->value->type = PMIX_STRING;
                     kp2->value->data.string = strdup(nrec->name);
                     rank = strtol(procs[j], NULL, 10);
-                    if (PMIX_SUCCESS != (rc = _add_key_for_rank(rank, kp2, cb))) {
+                    if (PMIX_SUCCESS != (rc = _add_key_for_rank(peer, rank, kp2, cb))) {
                         PMIX_ERROR_LOG(rc);
                         PMIX_RELEASE(kp2);
                         PMIX_DESTRUCT(&kv);
@@ -360,7 +369,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
                     kptr->value->data.bo.size = len;
                 }
             }
-            if (PMIX_SUCCESS != (rc = _add_key_for_rank(PMIX_RANK_WILDCARD, kptr, cb))) {
+            if (PMIX_SUCCESS != (rc = _add_key_for_rank(peer, PMIX_RANK_WILDCARD, kptr, cb))) {
                 PMIX_ERROR_LOG(rc);
                 PMIX_RELEASE(kptr);
                 goto exit;
@@ -383,7 +392,7 @@ static inline pmix_status_t _job_data_store(const char *nspace, void *cbdata)
     if (NULL != cb->dstore_fn) {
         uint32_t size = (uint32_t)pmix_value_array_get_size(cb->bufs);
         for (i = 0; i < size; i++) {
-            if (PMIX_SUCCESS != (rc = _rank_key_dstore_store(cbdata))) {
+            if (PMIX_SUCCESS != (rc = _rank_key_dstore_store(peer, cbdata))) {
                 PMIX_ERROR_LOG(rc);
                 goto exit;
             }

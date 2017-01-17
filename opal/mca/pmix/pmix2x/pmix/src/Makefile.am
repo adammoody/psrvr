@@ -11,7 +11,7 @@
 #                         All rights reserved.
 # Copyright (c) 2006-2016 Cisco Systems, Inc.  All rights reserved.
 # Copyright (c) 2012-2013 Los Alamos National Security, Inc.  All rights reserved.
-# Copyright (c) 2013-2016 Intel, Inc. All rights reserved
+# Copyright (c) 2013-2017 Intel, Inc.  All rights reserved.
 # $COPYRIGHT$
 #
 # Additional copyrights may follow
@@ -71,7 +71,6 @@ include server/Makefile.include
 include runtime/Makefile.include
 include tool/Makefile.include
 include common/Makefile.include
-include buffer_ops/Makefile.am
 if WANT_DSTORE
 include sm/Makefile.include
 include dstore/Makefile.include

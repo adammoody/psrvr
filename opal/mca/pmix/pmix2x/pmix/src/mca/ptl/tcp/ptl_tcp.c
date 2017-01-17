@@ -50,6 +50,8 @@
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/os_path.h"
+#include "src/util/pmix_environ.h"
+#include "src/mca/bfrops/base/base.h"
 
 #include "src/mca/ptl/base/base.h"
 #include "ptl_tcp.h"
@@ -105,120 +107,151 @@ static char *pmix_getline(FILE *fp)
 static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
                                      pmix_info_t *info, size_t ninfo)
 {
-    char *evar, **uri;
+    char *evar=NULL, **uri;
     char *filename, *host;
-    FILE *fp;
-    char *srvr, *p, *p2;
+    FILE *fp = NULL;
+    char *p, *p2, *tmpdir;
+    struct sockaddr_storage connection;
     struct sockaddr_in *in;
     struct sockaddr_in6 *in6;
     pmix_socklen_t len;
     int sd, rc;
+    size_t n;
+    bool system = false;
+    bool system_first = false;
 
     pmix_output_verbose(2, pmix_globals.debug_output,
                         "ptl:tcp: connecting to server");
 
     /* see if the connection info is in the info array - if
      * so, then that overrides all other options */
-
+    if (NULL != info) {
+        for (n=0; n < ninfo; n++) {
+            if (0 == strcmp(info[n].key, PMIX_TCP_URI)) {
+                evar = strdup(info[n].value.data.string);
+            } else if (0 == strcmp(info[n].key, PMIX_CONNECT_TO_SYSTEM)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    system = true;
+                } else {
+                    system = info[n].value.data.flag;
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_CONNECT_SYSTEM_FIRST)) {
+            if (PMIX_UNDEF == info[n].value.type) {
+                system_first = true;
+            } else {
+                system_first = info[n].value.data.flag;
+            }
+            }
+        }
+    }
 
     /* if I am a client, then we need to look for the appropriate
      * connection info in the environment */
     if (PMIX_PROC_CLIENT == pmix_globals.proc_type) {
-        if (NULL == (evar = getenv("PMIX_SERVER_URI2"))) {
-            /* not us */
-            return PMIX_ERR_NOT_SUPPORTED;
+        if (NULL == evar) {
+            if (NULL == (p = getenv("PMIX_SERVER_URI2_TCP"))) {
+                /* not us */
+                return PMIX_ERR_NOT_SUPPORTED;
+            }
+            evar = strdup(p);
         }
-
-        /* the URI consists of  elements:
-        *    - server nspace.rank
-        *    - ptl rendezvous URI
-        */
-        uri = pmix_argv_split(evar, ';');
-        if (2 != pmix_argv_count(uri)) {
-            PMIX_ERROR_LOG(PMIX_ERR_BAD_PARAM);
-            pmix_argv_free(uri);
-            return PMIX_ERR_NOT_SUPPORTED;
-        }
-
-        /* set the server nspace */
-        p = uri[0];
-        p2 = strchr(p, '.');
-        *p2 = '\0';
-        ++p2;
-        pmix_client_globals.myserver.info = PMIX_NEW(pmix_rank_info_t);
-        pmix_client_globals.myserver.info->nptr = PMIX_NEW(pmix_nspace_t);
-        (void)strncpy(pmix_client_globals.myserver.info->nptr->nspace, p, PMIX_MAX_NSLEN);
-
-        /* set the server rank */
-        pmix_client_globals.myserver.info->rank = strtoull(p2, NULL, 10);
-
-        /* save the URI, but do not overwrite what we may have received from
-         * the info-key directives */
-        if (NULL == mca_ptl_tcp_component.super.uri) {
-            mca_ptl_tcp_component.super.uri = strdup(uri[1]);
-        }
-        pmix_argv_free(uri);
-
     } else if (PMIX_PROC_TOOL == pmix_globals.proc_type) {
-        /* if we already have a URI, then look no further */
-        if (NULL == mca_ptl_tcp_component.super.uri) {
-            /* we have to discover the connection info,
-             * if possible. Start by looking for the connection
-             * info in the expected place - if the server supports
-             * tool connections via TCP, then there will be a
-             * "contact.txt" file under the system tmpdir */
-            filename = pmix_os_path(false, mca_ptl_tcp_component.tmpdir, "pmix-contact.txt", NULL);
-            if (NULL == filename) {
-                return PMIX_ERR_NOMEM;
-            }
-            fp = fopen(filename, "r");
-            if (NULL == fp) {
-                /* if we cannot open the file, then the server must not
-                 * be configured to support tool connections - so abort */
-                free(filename);
-                return PMIX_ERR_UNREACH;
-            }
-            free(filename);
-            /* get the URI */
-            srvr = pmix_getline(fp);
-            if (NULL == srvr) {
-                PMIX_ERROR_LOG(PMIX_ERR_FILE_READ_FAILURE);
+        /* if we were not given a URI, then we have to look */
+        if (NULL == evar) {
+            /* if we got the URI thru an MCA param, then look no further */
+            if (NULL != mca_ptl_tcp_component.super.uri) {
+                evar = strdup(mca_ptl_tcp_component.super.uri);
+            } else {
+                /* we have to discover the connection info,
+                 * if possible, based on any directives that
+                 * were provided */
+                if (system || system_first) {
+                    tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SYSTEM_TMPDIR);
+                    if (NULL == tmpdir) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    filename = pmix_os_path(false, tmpdir, "pmix", "pmix-contact.txt", NULL);
+                    free(tmpdir);
+                    if (NULL == filename) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    fp = fopen(filename, "r");
+                    free(filename);
+                    if (NULL == fp) {
+                        /* if we are directed to connect only to the system-level
+                         * server, then we can't reach it */
+                        if (!system_first) {
+                            return PMIX_ERR_UNREACH;
+                        }
+                    }
+                }
+                if (NULL == fp) {
+                    /* if we get here, then we are looking for a connection to the
+                     * local non-system server */
+                    tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SERVER_TMPDIR);
+                    if (NULL == tmpdir) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    filename = pmix_os_path(false, tmpdir, "pmix-contact.txt", NULL);
+                    free(tmpdir);
+                    if (NULL == filename) {
+                        return PMIX_ERR_NOMEM;
+                    }
+                    fp = fopen(filename, "r");
+                    free(filename);
+                    if (NULL == fp) {
+                        /* if we cannot open the file, then the server must not
+                         * be configured to support tool connections - so abort */
+                        return PMIX_ERR_UNREACH;
+                    }
+                }
+                /* get the URI */
+                evar = pmix_getline(fp);
                 fclose(fp);
-                return PMIX_ERR_UNREACH;
+                if (NULL == evar) {
+                    PMIX_ERROR_LOG(PMIX_ERR_FILE_READ_FAILURE);
+                    return PMIX_ERR_UNREACH;
+                }
             }
-            fclose(fp);
-            /* up to the first ';' is the server nspace/rank */
-            if (NULL == (p = strchr(srvr, ';'))) {
-                /* malformed */
-                free(srvr);
-                return PMIX_ERR_UNREACH;
-            }
-            *p = '\0';
-            ++p;  // move past the semicolon
-            /* the nspace is the section up to the '.' */
-            if (NULL == (p2 = strchr(srvr, '.'))) {
-                /* malformed */
-                free(srvr);
-                return PMIX_ERR_UNREACH;
-            }
-            *p2 = '\0';
-            ++p2;
-            /* set the server nspace */
-            pmix_client_globals.myserver.info = PMIX_NEW(pmix_rank_info_t);
-            pmix_client_globals.myserver.info->nptr = PMIX_NEW(pmix_nspace_t);
-            (void)strncpy(pmix_client_globals.myserver.info->nptr->nspace, srvr, PMIX_MAX_NSLEN);
-            pmix_client_globals.myserver.info->rank = strtoull(p2, NULL, 10);
-            /* now parse the uti itself */
-            mca_ptl_tcp_component.super.uri = strdup(p);
-            free(srvr);
         }
     }
+
+    /* the URI consists of  elements:
+    *    - server nspace.rank
+    *    - ptl rendezvous URI
+    */
+    uri = pmix_argv_split(evar, ';');
+    free(evar);
+    if (2 != pmix_argv_count(uri)) {
+        PMIX_ERROR_LOG(PMIX_ERR_BAD_PARAM);
+        pmix_argv_free(uri);
+        return PMIX_ERR_NOT_SUPPORTED;
+    }
+
+    /* set the server nspace */
+    p = uri[0];
+    p2 = strchr(p, '.');
+    *p2 = '\0';
+    ++p2;
+    pmix_client_globals.myserver.info = PMIX_NEW(pmix_rank_info_t);
+    pmix_client_globals.myserver.info->nptr = PMIX_NEW(pmix_nspace_t);
+    (void)strncpy(pmix_client_globals.myserver.info->nptr->nspace, p, PMIX_MAX_NSLEN);
+
+    /* set the server rank */
+    pmix_client_globals.myserver.info->rank = strtoull(p2, NULL, 10);
+
+    /* save the URI, but do not overwrite what we may have received from
+     * the info-key directives */
+    if (NULL == mca_ptl_tcp_component.super.uri) {
+        mca_ptl_tcp_component.super.uri = strdup(uri[1]);
+    }
+    pmix_argv_free(uri);
 
     /* mark that we are the active module for this server */
     pmix_client_globals.myserver.compat.ptl = &pmix_ptl_tcp_module;
 
     /* setup the path to the daemon rendezvous point */
-    memset(&mca_ptl_tcp_component.connection, 0, sizeof(struct sockaddr_storage));
+    memset(&connection, 0, sizeof(struct sockaddr_storage));
     if (0 == strncmp(mca_ptl_tcp_component.super.uri, "tcp4", 4)) {
         /* separate the IP address from the port */
         p = strdup(mca_ptl_tcp_component.super.uri);
@@ -227,7 +260,7 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
         ++p2;
         host = strdup(&p[7]);
         /* load the address */
-        in = (struct sockaddr_in*)&mca_ptl_tcp_component.connection;
+        in = (struct sockaddr_in*)&connection;
         in->sin_family = AF_INET;
         in->sin_addr.s_addr = inet_addr(host);
         if (in->sin_addr.s_addr == INADDR_NONE) {
@@ -249,7 +282,7 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
             host = strdup(&p[7]);
         }
         /* load the address */
-        in6 = (struct sockaddr_in6*)&mca_ptl_tcp_component.connection;
+        in6 = (struct sockaddr_in6*)&connection;
         in6->sin6_family = AF_INET6;
         if (0 == inet_pton(AF_INET6, host, (void*)&in6->sin6_addr)) {
             pmix_output (0, "ptl_tcp_parse_uri: Could not convert %s\n", host);
@@ -260,7 +293,7 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
     }
 
     /* establish the connection */
-    if (PMIX_SUCCESS != (rc = pmix_ptl_base_connect(&mca_ptl_tcp_component.connection, len, &sd))) {
+    if (PMIX_SUCCESS != (rc = pmix_ptl_base_connect(&connection, len, &sd))) {
         PMIX_ERROR_LOG(rc);
         return rc;
     }
@@ -270,7 +303,6 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
     if (PMIX_SUCCESS != (rc = send_connect_ack(sd))) {
         PMIX_ERROR_LOG(rc);
         CLOSE_THE_SOCKET(sd);
-        pmix_client_globals.myserver.sd = -1;
         return rc;
     }
 
@@ -278,7 +310,6 @@ static pmix_status_t connect_to_peer(struct pmix_peer_t *peer,
     if (PMIX_SUCCESS != (rc = recv_connect_ack(sd))) {
         PMIX_ERROR_LOG(rc);
         CLOSE_THE_SOCKET(sd);
-        pmix_client_globals.myserver.sd = -1;
         return rc;
     }
 
@@ -358,7 +389,7 @@ static pmix_status_t send_connect_ack(int sd)
     pmix_ptl_hdr_t hdr;
     size_t sdsize=0, csize=0, len;
     char *cred = NULL;
-    char *sec;
+    char *sec, *bfrop;
     pmix_status_t rc;
     uint8_t flag;
     uid_t euid;
@@ -378,34 +409,45 @@ static pmix_status_t send_connect_ack(int sd)
     hdr.pindex = -1;
     hdr.tag = UINT32_MAX;
 
+    /* allow space for a marker indicating client vs tool */
+    sdsize = 1;
+    /* add space for the version string */
+    sdsize += strlen(PMIX_VERSION) + 1;
+
     /* a security module was assigned to us during rte_init based
      * on a list of available security modules provided by our
      * local PMIx server, if known. Now use that module to
      * get a credential, if the security system provides one. Not
      * every psec module will do so, thus we must first check */
     if (PMIX_SUCCESS != (rc = pmix_psec.create_cred(&pmix_client_globals.myserver,
-                                                    PMIX_PROTOCOL_V2, &cred, &len))) {
+                                                    PMIX_PROTOCOL_V2_TCP, &cred, &len))) {
         return rc;
     }
-
-    /* allow space for a marker indicating client vs tool */
-    sdsize = 1;
+    /* reserve space for the credential and its length */
+    sdsize += sizeof(uint32_t) + len;
 
     if (PMIX_PROC_IS_CLIENT) {
-        flag = 0;
-        /* reserve space for our nspace and rank info */
-        sdsize += strlen(pmix_globals.myid.nspace) + 1 + sizeof(int);
+       flag = 0;
+       /* reserve space for our nspace and rank info */
+       sdsize += strlen(pmix_globals.myid.nspace) + 1 + sizeof(int);
+       /* add our active sec module info */
+        sec = strdup(pmix_globals.mypeer->compat.psec->name);
+        /* and our active bfrop module info */
+        bfrop = strdup(pmix_globals.mypeer->compat.bfrops->version);
     } else {
         flag = 1;
         /* add space for our uid/gid for ACL purposes */
         sdsize += 2*sizeof(uint32_t);
+        /* we are a tool, so we send our available modules
+         * and let the server pick which one we will use */
+        sec = pmix_psec.get_available_modules();
     }
-
-    /* add our active sec module info */
-    sec = pmix_psec.get_available_modules();
+    sdsize += strlen(sec) + 1 + strlen(bfrop) + 1;  // must NULL terminate the strings!
+    /* save room for the buffer type */
+    sdsize += sizeof(pmix_bfrop_buffer_type_t);
 
     /* set the number of bytes to be read beyond the header */
-    hdr.nbytes = sdsize + strlen(PMIX_VERSION) + 1 + strlen(sec) + 1 + sizeof(uint32_t) + len;  // must NULL terminate the VERSION string!
+    hdr.nbytes = sdsize;
 
     /* create a space for our message */
     sdsize = (sizeof(hdr) + hdr.nbytes);
@@ -414,19 +456,38 @@ static pmix_status_t send_connect_ack(int sd)
             free(cred);
         }
         free(sec);
+        free(bfrop);
         return PMIX_ERR_OUT_OF_RESOURCE;
     }
     memset(msg, 0, sdsize);
 
-    /* load the message */
+    /* load the message, starting with the header itself */
     csize=0;
     memcpy(msg, &hdr, sizeof(pmix_ptl_hdr_t));
     csize += sizeof(pmix_ptl_hdr_t);
+
+    /* provide our version */
+    memcpy(msg+csize, PMIX_VERSION, strlen(PMIX_VERSION));
+    csize += strlen(PMIX_VERSION)+1;
+
+    /* load our process type - this is a single byte,
+     * so no worry about heterogeneity here */
+    memcpy(msg+csize, &flag, 1);
+    csize += 1;
 
     /* provide our active psec module */
     memcpy(msg+csize, sec, strlen(sec));
     csize += strlen(sec)+1;
     free(sec);
+
+    /* our active bfrop module */
+    memcpy(msg+csize, bfrop, strlen(bfrop));
+    csize += strlen(bfrop)+1;
+    free(bfrop);
+
+    /* and our buffer type */
+    memcpy(msg+csize, &pmix_bfrops_globals.default_type, sizeof(pmix_bfrop_buffer_type_t));
+    csize += sizeof(pmix_bfrop_buffer_type_t);
 
     /* load the length of the credential - we put this in uint32_t
      * format as that is a fixed size, and convert to network
@@ -439,11 +500,6 @@ static pmix_status_t send_connect_ack(int sd)
         memcpy(msg+csize, cred, len);
         csize += len;
     }
-
-    /* load our process type - this is a single byte,
-     * so no worry about heterogeneity here */
-    memcpy(msg+csize, &flag, 1);
-    csize += 1;
 
     if (PMIX_PROC_IS_CLIENT) {
         /* if we are a client, provide our nspace/rank */
@@ -465,10 +521,6 @@ static pmix_status_t send_connect_ack(int sd)
         memcpy(msg+csize, &u32, sizeof(uint32_t));
         csize += sizeof(uint32_t);
     }
-
-    /* provide our version */
-    memcpy(msg+csize, PMIX_VERSION, strlen(PMIX_VERSION));
-    csize += strlen(PMIX_VERSION)+1;
 
     /* send the entire message across */
     if (PMIX_SUCCESS != pmix_ptl_base_send_blocking(sd, msg, sdsize)) {

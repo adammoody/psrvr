@@ -36,7 +36,7 @@
 #include <ctype.h>
 #include PMIX_EVENT_HEADER
 
-#include "src/buffer_ops/types.h"
+#include "src/mca/bfrops/bfrops_types.h"
 #include "src/class/pmix_hash_table.h"
 #include "src/class/pmix_list.h"
 
@@ -64,9 +64,9 @@ static void cbdes(pmix_cb_t *p)
 {
     PMIX_DESTRUCT(&p->data);
 }
-PMIX_EXPORT PMIX_CLASS_INSTANCE(pmix_cb_t,
-                                pmix_list_item_t,
-                                cbcon, cbdes);
+PMIX_CLASS_INSTANCE(pmix_cb_t,
+                   pmix_list_item_t,
+                   cbcon, cbdes);
 
 static void pcon(pmix_peer_t *p)
 {
@@ -106,9 +106,9 @@ static void pdes(pmix_peer_t *p)
         PMIX_RELEASE(p->recv_msg);
     }
 }
-PMIX_EXPORT PMIX_CLASS_INSTANCE(pmix_peer_t,
-                                pmix_object_t,
-                                pcon, pdes);
+PMIX_CLASS_INSTANCE(pmix_peer_t,
+                   pmix_object_t,
+                   pcon, pdes);
 
 static void nscon(pmix_nspace_t *p)
 {
@@ -168,7 +168,9 @@ static void sncon(pmix_server_nspace_t *p)
 {
     p->nlocalprocs = 0;
     p->all_registered = false;
-    PMIX_CONSTRUCT(&p->job_info, pmix_buffer_t);
+    p->nodata = false;
+    p->data_stored = false;
+    PMIX_CONSTRUCT(&p->info, pmix_list_t);
     PMIX_CONSTRUCT(&p->ranks, pmix_list_t);
     PMIX_CONSTRUCT(&p->mylocal, pmix_hash_table_t);
     pmix_hash_table_init(&p->mylocal, 16);
@@ -179,7 +181,7 @@ static void sncon(pmix_server_nspace_t *p)
 }
 static void sndes(pmix_server_nspace_t *p)
 {
-    PMIX_DESTRUCT(&p->job_info);
+    PMIX_LIST_DESTRUCT(&p->info);
     PMIX_LIST_DESTRUCT(&p->ranks);
     PMIX_DESTRUCT(&p->mylocal);
     PMIX_DESTRUCT(&p->myremote);
@@ -192,6 +194,7 @@ PMIX_EXPORT PMIX_CLASS_INSTANCE(pmix_server_nspace_t,
 static void info_con(pmix_rank_info_t *info)
 {
     info->gid = info->uid = 0;
+    info->peer = NULL;
     info->nptr = NULL;
     info->rank = PMIX_RANK_WILDCARD;
     info->modex_recvd = false;
@@ -200,6 +203,10 @@ static void info_con(pmix_rank_info_t *info)
 }
 static void info_des(pmix_rank_info_t *info)
 {
+    if (NULL != info->peer) {
+        pmix_peer_t *pr = (pmix_peer_t*)info->peer;
+        PMIX_RELEASE(pr);
+    }
     if (NULL!= info->nptr) {
         PMIX_RELEASE(info->nptr);
     }

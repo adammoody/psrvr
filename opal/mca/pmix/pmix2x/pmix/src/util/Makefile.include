@@ -49,7 +49,8 @@ headers += \
         util/pif.h \
         util/tsd.h \
         util/parse_options.h \
-        util/compress.h
+        util/compress.h \
+        util/os_dirpath.h
 
 sources += \
         util/argv.c \
@@ -71,7 +72,8 @@ sources += \
         util/net.c \
         util/pif.c \
         util/parse_options.c \
-        util/compress.c
+        util/compress.c \
+        util/os_dirpath.c
 
 libpmix_la_LIBADD += \
         util/keyval/libpmixutilkeyval.la

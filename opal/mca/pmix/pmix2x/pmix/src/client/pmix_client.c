@@ -61,7 +61,6 @@
 
 
 #include "src/class/pmix_list.h"
-#include "src/buffer_ops/buffer_ops.h"
 #include "src/event/pmix_event.h"
 #include "src/util/argv.h"
 #include "src/util/compress.h"
@@ -70,6 +69,7 @@
 #include "src/util/output.h"
 #include "src/runtime/pmix_progress_threads.h"
 #include "src/runtime/pmix_rte.h"
+#include "src/mca/bfrops/base/base.h"
 #include "src/mca/ptl/ptl.h"
 #include "src/include/pmix_globals.h"
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
@@ -109,27 +109,31 @@ static void pmix_client_notify_recv(struct pmix_peer_t *peer,
     chain->final_cbdata = chain;
 
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &cmd, &cnt, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &cmd, &cnt, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
     /* unpack the status */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &chain->status, &cnt, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &chain->status, &cnt, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
 
     /* unpack the source of the event */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &chain->source, &cnt, PMIX_PROC))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &chain->source, &cnt, PMIX_PROC))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
 
     /* unpack the info that might have been provided */
     cnt=1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &ninfo, &cnt, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &ninfo, &cnt, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         goto error;
     }
@@ -140,7 +144,8 @@ static void pmix_client_notify_recv(struct pmix_peer_t *peer,
 
     if (0 < ninfo) {
         cnt = ninfo;
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, chain->info, &cnt, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                     buf, chain->info, &cnt, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
             goto error;
         }
@@ -192,7 +197,8 @@ static void job_data(struct pmix_peer_t *pr,
 
     /* unpack the nspace - we don't really need it, but have to
      * unpack it to maintain sequence */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &nspace, &cnt, PMIX_STRING))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(&pmix_client_globals.myserver,
+                                                 buf, &nspace, &cnt, PMIX_STRING))) {
         PMIX_ERROR_LOG(rc);
         cb->status = PMIX_ERROR;
         cb->active = false;
@@ -320,6 +326,25 @@ PMIX_EXPORT pmix_status_t PMIx_Init(pmix_proc_t *proc,
     /* the server will be using the same */
     pmix_client_globals.myserver.compat.psec = pmix_globals.mypeer->compat.psec;
 
+    /* assign our bfrops module */
+    evar = getenv("PMIX_BFROP_MODULE");  // if directive was given, use it
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.assign_module(pmix_globals.mypeer, evar))) {
+        return rc;
+    }
+    /* and set our buffer type */
+    evar = getenv("PMIX_BFROP_BUFFER_TYPE");  // if directive was given, use it
+    if (NULL == evar) {
+        /* without directive, we can only default */
+        pmix_globals.mypeer->compat.type = pmix_bfrops_globals.default_type;
+    } else if (0 == strcmp(evar, "PMIX_BFROP_BUFFER_FULLY_DESC")) {
+        pmix_globals.mypeer->compat.type = PMIX_BFROP_BUFFER_FULLY_DESC;
+    } else {
+        pmix_globals.mypeer->compat.type = PMIX_BFROP_BUFFER_NON_DESC;
+    }
+    /* the server will be using the same */
+    pmix_client_globals.myserver.compat.bfrops = pmix_globals.mypeer->compat.bfrops;
+    pmix_client_globals.myserver.compat.type = pmix_globals.mypeer->compat.type;
+
     /* setup the shared memory support */
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
     if (PMIX_SUCCESS != (rc = pmix_dstore_init(NULL, 0))) {
@@ -336,7 +361,8 @@ PMIX_EXPORT pmix_status_t PMIx_Init(pmix_proc_t *proc,
      * transaction because some systems cannot handle very large
      * blocking operations and error out if we try them. */
      req = PMIX_NEW(pmix_buffer_t);
-     if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(req, &cmd, 1, PMIX_CMD))) {
+     if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                req, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(req);
         return rc;
@@ -359,7 +385,7 @@ PMIX_EXPORT pmix_status_t PMIx_Init(pmix_proc_t *proc,
         return rc;
     }
 
-    /* lood for a debugger attach key */
+    /* look for a debugger attach key */
     (void)strncpy(wildcard.nspace, pmix_globals.myid.nspace, PMIX_MAX_NSLEN);
     wildcard.rank = PMIX_RANK_WILDCARD;
     PMIX_INFO_LOAD(&ginfo, PMIX_IMMEDIATE, NULL, PMIX_BOOL);
@@ -435,7 +461,8 @@ PMIX_EXPORT pmix_status_t PMIx_Finalize(const pmix_info_t info[], size_t ninfo)
          * server that we are normally terminating */
         msg = PMIX_NEW(pmix_buffer_t);
         /* pack the cmd */
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, &cmd, 1, PMIX_CMD))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msg);
             return rc;
@@ -467,8 +494,6 @@ PMIX_EXPORT pmix_status_t PMIx_Finalize(const pmix_info_t info[], size_t ninfo)
         CLOSE_THE_SOCKET(pmix_client_globals.myserver.sd);
     }
 
-    pmix_bfrop_close();
-
     pmix_class_finalize();
 
     return PMIX_SUCCESS;
@@ -497,32 +522,37 @@ PMIX_EXPORT pmix_status_t PMIx_Abort(int flag, const char msg[],
     /* create a buffer to hold the message */
     bfr = PMIX_NEW(pmix_buffer_t);
     /* pack the cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(bfr, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               bfr, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(bfr);
         return rc;
     }
     /* pack the status flag */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(bfr, &flag, 1, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               bfr, &flag, 1, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(bfr);
         return rc;
     }
     /* pack the string message - a NULL is okay */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(bfr, &msg, 1, PMIX_STRING))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               bfr, &msg, 1, PMIX_STRING))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(bfr);
         return rc;
     }
     /* pack the number of procs */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(bfr, &nprocs, 1, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               bfr, &nprocs, 1, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(bfr);
         return rc;
     }
     /* pack any provided procs */
     if (0 < nprocs) {
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(bfr, procs, 1, PMIX_PROC))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   bfr, procs, 1, PMIX_PROC))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(bfr);
             return rc;
@@ -611,7 +641,8 @@ static void _putfn(int sd, short args, void *cbdata)
         pmix_output_verbose(2, pmix_globals.debug_output,
                             "pmix: put %s data for key %s in local cache",
                             cb->key, (PMIX_GLOBAL == cb->scope) ? "global" : "local");
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(pmix_globals.cache_local, kv, 1, PMIX_KVAL))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   pmix_globals.cache_local, kv, 1, PMIX_KVAL))) {
             PMIX_ERROR_LOG(rc);
         }
     }
@@ -623,7 +654,8 @@ static void _putfn(int sd, short args, void *cbdata)
         pmix_output_verbose(2, pmix_globals.debug_output,
                             "pmix: put %s data for key %s in remote cache",
                             cb->key, (PMIX_GLOBAL == cb->scope) ? "global" : "remote");
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(pmix_globals.cache_remote, kv, 1, PMIX_KVAL))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   pmix_globals.cache_remote, kv, 1, PMIX_KVAL))) {
             PMIX_ERROR_LOG(rc);
         }
     }
@@ -677,7 +709,8 @@ static void _commitfn(int sd, short args, void *cbdata)
 
     msgout = PMIX_NEW(pmix_buffer_t);
     /* pack the cmd */
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msgout, &cmd, 1, PMIX_CMD))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                               msgout, &cmd, 1, PMIX_CMD))) {
         PMIX_ERROR_LOG(rc);
         PMIX_RELEASE(msgout);
         goto done;
@@ -686,12 +719,14 @@ static void _commitfn(int sd, short args, void *cbdata)
     /* if we haven't already done it, ensure we have committed our values */
     if (NULL != pmix_globals.cache_local) {
         scope = PMIX_LOCAL;
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msgout, &scope, 1, PMIX_SCOPE))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msgout, &scope, 1, PMIX_SCOPE))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msgout);
             goto done;
         }
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msgout, &pmix_globals.cache_local, 1, PMIX_BUFFER))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msgout, &pmix_globals.cache_local, 1, PMIX_BUFFER))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msgout);
             goto done;
@@ -700,12 +735,14 @@ static void _commitfn(int sd, short args, void *cbdata)
     }
     if (NULL != pmix_globals.cache_remote) {
         scope = PMIX_REMOTE;
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msgout, &scope, 1, PMIX_SCOPE))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msgout, &scope, 1, PMIX_SCOPE))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msgout);
             goto done;
         }
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msgout, &pmix_globals.cache_remote, 1, PMIX_BUFFER))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msgout, &pmix_globals.cache_remote, 1, PMIX_BUFFER))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msgout);
             goto done;
@@ -772,9 +809,9 @@ static void _peersfn(int sd, short args, void *cbdata)
     /* cycle across our known nspaces */
     tmp = NULL;
 #if defined(PMIX_ENABLE_DSTORE) && (PMIX_ENABLE_DSTORE == 1)
-    if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(cb->nspace, PMIX_RANK_WILDCARD,
-                      cb->key, &cb->value))) {
-
+    if (PMIX_SUCCESS == (rc = pmix_dstore_fetch(&pmix_client_globals.myserver,
+                                                cb->nspace, PMIX_RANK_WILDCARD,
+                                                cb->key, &cb->value))) {
         tmp = pmix_argv_split(cb->value->data.string, ',');
         for (i=0; NULL != tmp[i]; i++) {
             pmix_argv_append_nosize(&nsps, cb->nspace);

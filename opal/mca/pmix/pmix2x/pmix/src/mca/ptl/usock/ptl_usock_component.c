@@ -55,6 +55,7 @@
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/fd.h"
+#include "src/util/pmix_environ.h"
 #include "src/util/show_help.h"
 #include "src/util/strnlen.h"
 #include "src/mca/psec/psec.h"
@@ -65,6 +66,7 @@
 
 static pmix_status_t component_open(void);
 static pmix_status_t component_close(void);
+static int component_register(void);
 static int component_query(pmix_mca_base_module_t **module, int *priority);
 static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
                                     bool *need_listener);
@@ -73,76 +75,57 @@ static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
  * Instantiate the public struct with all of our public information
  * and pointers to our public functions in it
  */
-PMIX_EXPORT pmix_ptl_usock_component_t mca_ptl_usock_component = {
-    .super = {
-        .base = {
-            PMIX_PTL_BASE_VERSION_1_0_0,
+PMIX_EXPORT pmix_ptl_base_component_t mca_ptl_usock_component = {
+    .base = {
+        PMIX_PTL_BASE_VERSION_1_0_0,
 
-            /* Component name and version */
-            .pmix_mca_component_name = "usock",
-            PMIX_MCA_BASE_MAKE_VERSION(component,
-                                       PMIX_MAJOR_VERSION,
-                                       PMIX_MINOR_VERSION,
-                                       PMIX_RELEASE_VERSION),
+        /* Component name and version */
+        .pmix_mca_component_name = "usock",
+        PMIX_MCA_BASE_MAKE_VERSION(component,
+                                   PMIX_MAJOR_VERSION,
+                                   PMIX_MINOR_VERSION,
+                                   PMIX_RELEASE_VERSION),
 
-            /* Component open and close functions */
-            .pmix_mca_open_component = component_open,
-            .pmix_mca_close_component = component_close,
-            .pmix_mca_query_component = component_query
-        },
-        .priority = 15,
-        .uri = NULL,
-        .setup_listener = setup_listener
+        /* Component open and close functions */
+        .pmix_mca_open_component = component_open,
+        .pmix_mca_close_component = component_close,
+        .pmix_mca_register_component_params = component_register,
+        .pmix_mca_query_component = component_query
     },
-    .tmpdir = NULL,
-    .filename = NULL
+    .priority = 15,
+    .uri = NULL,
+    .setup_listener = setup_listener
 };
 
 static void connection_handler(int sd, short args, void *cbdata);
-static void listener_cb(int incoming_sd, void *cbdata);
-static char *sec_mode = NULL;
+static pmix_status_t setup_socket(pmix_listener_t *lt,
+                                  struct sockaddr_un *address);
 
 pmix_status_t component_open(void)
 {
-    char *tdir;
-
-    memset(&mca_ptl_usock_component.connection, 0, sizeof(mca_ptl_usock_component.connection));
-
-    /* check for environ-based directives
-     * on system tmpdir to use */
-    if (NULL == (tdir = getenv("PMIX_SYSTEM_TMPDIR"))) {
-        if (NULL == (tdir = getenv("TMPDIR"))) {
-            if (NULL == (tdir = getenv("TEMP"))) {
-                if (NULL == (tdir = getenv("TMP"))) {
-                    tdir = "/tmp";
-                }
-            }
-        }
-    }
-    if (NULL != tdir) {
-        mca_ptl_usock_component.tmpdir = strdup(tdir);
-    }
-
     return PMIX_SUCCESS;
 }
 
 
 pmix_status_t component_close(void)
 {
-    if (NULL != sec_mode) {
-        free(sec_mode);
+    if (NULL != mca_ptl_usock_component.uri) {
+        free(mca_ptl_usock_component.uri);
     }
-    if (NULL != mca_ptl_usock_component.tmpdir) {
-        free(mca_ptl_usock_component.tmpdir);
-    }
-    if (NULL != mca_ptl_usock_component.super.uri) {
-        free(mca_ptl_usock_component.super.uri);
-    }
-    if (NULL != mca_ptl_usock_component.filename) {
-        /* remove the file */
-        unlink(mca_ptl_usock_component.filename);
-        free(mca_ptl_usock_component.filename);
-    }
+
+    return PMIX_SUCCESS;
+}
+
+static int component_register(void)
+{
+    pmix_mca_base_component_t *component = &mca_ptl_usock_component.base;
+
+    (void)pmix_mca_base_component_var_register(component, "server_uri",
+                                               "URI of a server a tool wishes to connect to",
+                                               PMIX_MCA_BASE_VAR_TYPE_STRING, NULL, 0, 0,
+                                               PMIX_INFO_LVL_2,
+                                               PMIX_MCA_BASE_VAR_SCOPE_LOCAL,
+                                               &mca_ptl_usock_component.uri);
 
     return PMIX_SUCCESS;
 }
@@ -165,14 +148,16 @@ static int component_query(pmix_mca_base_module_t **module, int *priority)
 static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
                                     bool *need_listener)
 {
-    int flags;
     size_t n;
     pmix_listener_t *lt;
     pmix_status_t rc;
-    socklen_t addrlen;
     struct sockaddr_un *address;
     bool disabled = false;
-    char *secmods, **options, *pmix_pid;
+    bool v1support = true;
+    bool v2support = true;
+    bool tool_support = false;
+    bool system_support = false;
+    char *pmix_pid, *tmpdir;
     pid_t mypid;
 
     pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
@@ -192,12 +177,38 @@ static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
                 } else {
                     disabled = info[n].value.data.flag;
                 }
-                break;
+                if (disabled) {
+                    break;  // no need to look further
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_USOCK_DISABLE_V1)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    v1support = false;
+                } else {
+                    v1support = info[n].value.data.flag;
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_USOCK_DISABLE_V2)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    v2support = false;
+                } else {
+                    v2support = info[n].value.data.flag;
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_SERVER_TOOL_SUPPORT)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    tool_support = true;
+                } else {
+                    tool_support = info[n].value.data.flag;
+                }
+            } else if (0 == strcmp(info[n].key, PMIX_SERVER_SYSTEM_SUPPORT)) {
+                if (PMIX_UNDEF == info[n].value.type) {
+                    system_support = true;
+                } else {
+                    system_support = info[n].value.data.flag;
+                }
             }
         }
     }
 
-    /* see if we have been disabled */
+    /* see if we have been completely disabled */
     if (disabled) {
         pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                             "ptl:usock not available");
@@ -207,154 +218,283 @@ static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
     pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                         "ptl:usock setting up listener");
 
-    addrlen = sizeof(struct sockaddr_un);
-    address = (struct sockaddr_un*)&mca_ptl_usock_component.connection;
-    address->sun_family = AF_UNIX;
+    /* get our tmpdir */
+    tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SERVER_TMPDIR);
 
-    /* any client we hear from will be using v1.x protocols. This
-     * means that they cannot tell us what security module they
-     * are using as this wasn't included in their handshake. So
-     * the best we can assume is that they are using the highest
-     * priority default we have */
-    secmods = pmix_psec.get_available_modules();
-    options = pmix_argv_split(secmods, ',');
-    sec_mode = strdup(options[0]);
-    pmix_argv_free(options);
-    free(secmods);
+    if (v1support) {
+        /* define the listener */
+        lt = PMIX_NEW(pmix_listener_t);
 
-    /* define the listener */
-    lt = PMIX_NEW(pmix_listener_t);
+        /* setup the base address structure */
+        address = (struct sockaddr_un*)&lt->connection;
+        address->sun_family = AF_UNIX;
 
-    /* for now, just setup the v1.1 series rendezvous point
-     * we use the pid to reduce collisions */
-    mypid = getpid();
-    if (0 > asprintf(&pmix_pid, "%s/pmix-%d", mca_ptl_usock_component.tmpdir, mypid)) {
-        PMIX_RELEASE(lt);
-        return PMIX_ERR_NOMEM;
-    }
-    if ((strlen(pmix_pid) + 1) > sizeof(address->sun_path)-1) {
-        pmix_show_help("help-pmix-server.txt", "rnd-path-too-long", true,
-                       mca_ptl_usock_component.tmpdir, pmix_pid);
+        /* setup the v1.1 series rendezvous point
+         * which uses the pid to reduce collisions */
+        mypid = getpid();
+        if (0 > asprintf(&pmix_pid, "%s/pmix-%d", tmpdir, mypid)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        if ((strlen(pmix_pid) + 1) > sizeof(address->sun_path)-1) {
+            pmix_show_help("help-pmix-server.txt", "rnd-path-too-long", true,
+                           tmpdir, pmix_pid);
+            free(pmix_pid);
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_INVALID_LENGTH;
+        }
+        snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", pmix_pid);
         free(pmix_pid);
-        PMIX_RELEASE(lt);
-        return PMIX_ERR_INVALID_LENGTH;
-    }
-    snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", pmix_pid);
-    free(pmix_pid);
-    /* set the URI */
-    lt->varname = strdup("PMIX_SERVER_URI");
-    if (0 > asprintf(&lt->uri, "%s:%lu:%s", pmix_globals.myid.nspace,
-                    (unsigned long)pmix_globals.myid.rank, address->sun_path)) {
-        PMIX_RELEASE(lt);
-        return PMIX_ERR_NOMEM;
-    }
-    /* save the rendezvous filename for later removal */
-    mca_ptl_usock_component.filename = strdup(address->sun_path);
+        /* set the URI to be compatible with legacy clients */
+        lt->varname = strdup("PMIX_SERVER_URI");
+        if (0 > asprintf(&lt->uri, "%s:%lu:%s", pmix_globals.myid.nspace,
+                        (unsigned long)pmix_globals.myid.rank, address->sun_path)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        /* save the rendezvous filename for later removal */
+        lt->filename = strdup(address->sun_path);
+        lt->protocol = PMIX_PROTOCOL_V1_USOCK;
+        lt->ptl = (struct pmix_ptl_module_t*)&pmix_ptl_usock_module;
+        lt->cbfunc = connection_handler;
+        pmix_list_append(&pmix_ptl_globals.listeners, &lt->super);
 
-    lt->protocol = PMIX_PROTOCOL_V1;
-    lt->ptl = (struct pmix_ptl_module_t*)&pmix_ptl_usock_module;
-    lt->cbfunc = connection_handler;
-    pmix_list_append(&pmix_ptl_globals.listeners, &lt->super);
+        /* setup the socket */
+        if (PMIX_SUCCESS != (rc = setup_socket(lt, address))) {
+            pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
+            PMIX_RELEASE(lt);
+            goto sockerror;
+        }
+    }
+
+    if (v2support) {
+        /* define the listener */
+        lt = PMIX_NEW(pmix_listener_t);
+
+        /* setup the base address structure */
+        address = (struct sockaddr_un*)&lt->connection;
+        address->sun_family = AF_UNIX;
+
+        /* setup the v2 series rendezvous point
+         * which uses the pid to reduce collisions */
+        mypid = getpid();
+        if (0 > asprintf(&pmix_pid, "%s/pmix2-%d", tmpdir, mypid)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        if ((strlen(pmix_pid) + 1) > sizeof(address->sun_path)-1) {
+            pmix_show_help("help-pmix-server.txt", "rnd-path-too-long", true,
+                           tmpdir, pmix_pid);
+            free(pmix_pid);
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_INVALID_LENGTH;
+        }
+        snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", pmix_pid);
+        free(pmix_pid);
+        /* set the URI to be compatible with legacy clients */
+        lt->varname = strdup("PMIX_SERVER_URI2_USOCK");
+        if (0 > asprintf(&lt->uri, "%s:%lu:%s", pmix_globals.myid.nspace,
+                        (unsigned long)pmix_globals.myid.rank, address->sun_path)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        /* save the rendezvous filename for later removal */
+        lt->filename = strdup(address->sun_path);
+        lt->protocol = PMIX_PROTOCOL_V2_USOCK;
+        lt->ptl = (struct pmix_ptl_module_t*)&pmix_ptl_usock_module;
+        lt->cbfunc = connection_handler;
+        pmix_list_append(&pmix_ptl_globals.listeners, &lt->super);
+
+        /* setup the socket */
+        if (PMIX_SUCCESS != (rc = setup_socket(lt, address))) {
+            pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
+            PMIX_RELEASE(lt);
+            goto sockerror;
+        }
+    }
+    /* done with this tmpdir */
+    free(tmpdir);
+
+    if (tool_support) {
+        /* we need the server directory */
+        tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SERVER_TMPDIR);
+        /* define the listener */
+        lt = PMIX_NEW(pmix_listener_t);
+
+        /* setup the base address structure */
+        address = (struct sockaddr_un*)&lt->connection;
+        address->sun_family = AF_UNIX;
+
+        /* setup the v2 series rendezvous point
+         * which uses the pid to reduce collisions */
+        if (0 > asprintf(&pmix_pid, "%s/usock-contact.txt", tmpdir)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        if ((strlen(pmix_pid) + 1) > sizeof(address->sun_path)-1) {
+            pmix_show_help("help-pmix-server.txt", "rnd-path-too-long", true,
+                           tmpdir, pmix_pid);
+            free(pmix_pid);
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_INVALID_LENGTH;
+        }
+        snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", pmix_pid);
+        free(pmix_pid);
+        /* we do not pass a URI, so don't define a variable - the socket creates the file */
+        if (0 > asprintf(&lt->uri, "%s:%lu:%s", pmix_globals.myid.nspace,
+                        (unsigned long)pmix_globals.myid.rank, address->sun_path)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        /* save the rendezvous filename for later removal */
+        lt->filename = strdup(address->sun_path);
+        lt->protocol = PMIX_PROTOCOL_V2_USOCK;
+        lt->ptl = (struct pmix_ptl_module_t*)&pmix_ptl_usock_module;
+        lt->cbfunc = connection_handler;
+        pmix_list_append(&pmix_ptl_globals.listeners, &lt->super);
+
+        /* setup the socket */
+        if (PMIX_SUCCESS != (rc = setup_socket(lt, address))) {
+            pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
+            PMIX_RELEASE(lt);
+            goto sockerror;
+        }
+    }
+
+    if (system_support) {
+        /* we need the system directory */
+        tmpdir = pmix_tmp_directory(info, ninfo, PMIX_SYSTEM_TMPDIR);
+        /* define the listener */
+        lt = PMIX_NEW(pmix_listener_t);
+
+        /* setup the base address structure */
+        address = (struct sockaddr_un*)&lt->connection;
+        address->sun_family = AF_UNIX;
+
+        /* setup the v2 series rendezvous point
+         * which uses the pid to reduce collisions */
+        if (0 > asprintf(&pmix_pid, "%s/pmix/usock-contact.txt", tmpdir)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        if ((strlen(pmix_pid) + 1) > sizeof(address->sun_path)-1) {
+            pmix_show_help("help-pmix-server.txt", "rnd-path-too-long", true,
+                           tmpdir, pmix_pid);
+            free(pmix_pid);
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_INVALID_LENGTH;
+        }
+        snprintf(address->sun_path, sizeof(address->sun_path)-1, "%s", pmix_pid);
+        free(pmix_pid);
+        /* we do not pass a URI, so don't define a variable - the socket creates the file */
+        if (0 > asprintf(&lt->uri, "%s:%lu:%s", pmix_globals.myid.nspace,
+                        (unsigned long)pmix_globals.myid.rank, address->sun_path)) {
+            PMIX_RELEASE(lt);
+            return PMIX_ERR_NOMEM;
+        }
+        /* save the rendezvous filename for later removal */
+        lt->filename = strdup(address->sun_path);
+        lt->protocol = PMIX_PROTOCOL_V2_USOCK;
+        lt->ptl = (struct pmix_ptl_module_t*)&pmix_ptl_usock_module;
+        lt->cbfunc = connection_handler;
+        pmix_list_append(&pmix_ptl_globals.listeners, &lt->super);
+
+        /* setup the socket */
+        if (PMIX_SUCCESS != (rc = setup_socket(lt, address))) {
+            pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
+            PMIX_RELEASE(lt);
+            goto sockerror;
+        }
+    }
+
+    *need_listener = true;
+
+    return PMIX_SUCCESS;
+
+  sockerror:
+    free(tmpdir);
+    pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
+    PMIX_RELEASE(lt);
+    return PMIX_ERROR;
+}
+
+static pmix_status_t setup_socket(pmix_listener_t *lt,
+                                  struct sockaddr_un *address)
+{
+    int flags;
+    socklen_t addrlen;
+
+    addrlen = sizeof(struct sockaddr_un);
 
     /* create a listen socket for incoming connection attempts */
     lt->socket = socket(PF_UNIX, SOCK_STREAM, 0);
     if (lt->socket < 0) {
         printf("%s:%d socket() failed\n", __FILE__, __LINE__);
-        goto sockerror;
+        return PMIX_ERROR;
     }
     /* Set the socket to close-on-exec so that no children inherit
      * this FD */
     if (pmix_fd_set_cloexec(lt->socket) != PMIX_SUCCESS) {
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
+        return PMIX_ERROR;
     }
 
     if (bind(lt->socket, (struct sockaddr*)address, addrlen) < 0) {
         printf("%s:%d bind() failed\n", __FILE__, __LINE__);
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
+        return PMIX_ERROR;
     }
     /* chown as required */
     if (lt->owner_given) {
         if (0 != chown(address->sun_path, lt->owner, -1)) {
             pmix_output(0, "CANNOT CHOWN socket %s: %s", address->sun_path, strerror (errno));
             CLOSE_THE_SOCKET(lt->socket);
-            goto sockerror;
+            return PMIX_ERROR;
         }
     }
     if (lt->group_given) {
         if (0 != chown(address->sun_path, -1, lt->group)) {
             pmix_output(0, "CANNOT CHOWN socket %s: %s", address->sun_path, strerror (errno));
             CLOSE_THE_SOCKET(lt->socket);
-            goto sockerror;
+            return PMIX_ERROR;
         }
     }
     /* set the mode as required */
     if (0 != chmod(address->sun_path, lt->mode)) {
         pmix_output(0, "CANNOT CHMOD socket %s: %s", address->sun_path, strerror (errno));
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
+        return PMIX_ERROR;
     }
 
     /* setup listen backlog to maximum allowed by kernel */
     if (listen(lt->socket, SOMAXCONN) < 0) {
         printf("%s:%d listen() failed\n", __FILE__, __LINE__);
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
+        return PMIX_ERROR;
     }
 
     /* set socket up to be non-blocking, otherwise accept could block */
     if ((flags = fcntl(lt->socket, F_GETFL, 0)) < 0) {
         printf("%s:%d fcntl(F_GETFL) failed\n", __FILE__, __LINE__);
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
+        return PMIX_ERROR;
     }
     flags |= O_NONBLOCK;
     if (fcntl(lt->socket, F_SETFL, flags) < 0) {
         printf("%s:%d fcntl(F_SETFL) failed\n", __FILE__, __LINE__);
         CLOSE_THE_SOCKET(lt->socket);
-        goto sockerror;
-    }
-
-    /* if the server will listen for us, then ask it to do so now */
-    rc = PMIX_ERR_NOT_SUPPORTED;
-    if (NULL != pmix_host_server.listener) {
-        rc = pmix_host_server.listener(lt->socket, listener_cb, (void*)lt);
-    }
-
-    if (PMIX_SUCCESS != rc) {
-        *need_listener = true;
+        return PMIX_ERROR;
     }
 
     return PMIX_SUCCESS;
-
-  sockerror:
-      pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
-      PMIX_RELEASE(lt);
-      return PMIX_ERROR;
-}
-
-static void listener_cb(int incoming_sd, void *cbdata)
-{
-    pmix_pending_connection_t *pending_connection;
-
-    /* throw it into our event library for processing */
-    pmix_output_verbose(8, pmix_ptl_base_framework.framework_output,
-                        "listen_cb: pushing new connection %d into evbase",
-                        incoming_sd);
-    pending_connection = PMIX_NEW(pmix_pending_connection_t);
-    pending_connection->sd = incoming_sd;
-    event_assign(&pending_connection->ev, pmix_globals.evbase, -1,
-                 EV_WRITE, connection_handler, pending_connection);
-    event_active(&pending_connection->ev, EV_WRITE, 1);
 }
 
 /* Parse init-ack message:
  *    NSPACE<0><rank>VERSION<0>[CRED<0>]
  */
-static pmix_status_t parse_connect_ack (char *msg, unsigned int len,
-                                        char **nspace, unsigned int *rank,
-                                        char **version, char **cred)
+static pmix_status_t parse_connect_ack(char *msg, unsigned int len,
+                                       char **nspace, unsigned int *rank,
+                                       char **version, char **ptr, size_t *outlen)
 {
     unsigned int msglen;
 
@@ -363,6 +503,8 @@ static pmix_status_t parse_connect_ack (char *msg, unsigned int len,
         *nspace = msg;
         msg += strlen(*nspace) + 1;
         len -= strlen(*nspace) + 1;
+        *ptr = msg;
+        *outlen = len;
     } else {
         return PMIX_ERR_BAD_PARAM;
     }
@@ -372,6 +514,8 @@ static pmix_status_t parse_connect_ack (char *msg, unsigned int len,
         memcpy(rank, msg, sizeof(int));
         msg += sizeof(int);
         len -= sizeof(int);
+        *ptr = msg;
+        *outlen = len;
     } else {
         return PMIX_ERR_BAD_PARAM;
     }
@@ -381,15 +525,10 @@ static pmix_status_t parse_connect_ack (char *msg, unsigned int len,
         *version = msg;
         msg += strlen(*version) + 1;
         len -= strlen(*version) + 1;
+        *ptr = msg;
+        *outlen = len;
     } else {
         return PMIX_ERR_BAD_PARAM;
-    }
-
-    PMIX_STRNLEN(msglen, msg, len);
-    if (msglen < len)
-        *cred = msg;
-    else {
-        *cred = NULL;
     }
 
     return PMIX_SUCCESS;
@@ -399,7 +538,7 @@ static pmix_status_t parse_connect_ack (char *msg, unsigned int len,
 static void connection_handler(int sd, short args, void *cbdata)
 {
     pmix_pending_connection_t *pnd = (pmix_pending_connection_t*)cbdata;
-    char *msg, *nspace, *version, *cred;
+    char *msg, *nspace, *version, *cred, *ptr;
     pmix_status_t rc;
     unsigned int rank;
     pmix_usock_hdr_t hdr;
@@ -409,6 +548,8 @@ static void connection_handler(int sd, short args, void *cbdata)
     bool found;
     pmix_proc_t proc;
     size_t len;
+    unsigned int msglen;
+    pmix_listener_protocol_t protocol;
 
     pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                         "USOCK CONNECTION FROM PEER ON SOCKET %d", pnd->sd);
@@ -446,8 +587,11 @@ static void connection_handler(int sd, short args, void *cbdata)
         return;
     }
 
-    if (PMIX_SUCCESS != (rc = parse_connect_ack (msg, hdr.nbytes, &nspace,
-                                                 &rank, &version, &cred))) {
+    /* regardless of the client's version, we know there will at least
+     * be the nspace, rank, and version fields in the message - so let's
+     * parse those out */
+    if (PMIX_SUCCESS != (rc = parse_connect_ack(msg, hdr.nbytes, &nspace,
+                                                &rank, &version, &ptr, &len))) {
         pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                             "error parsing connect-ack from client ON SOCKET %d", pnd->sd);
         free(msg);
@@ -459,11 +603,6 @@ static void connection_handler(int sd, short args, void *cbdata)
     pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                         "connect-ack recvd from peer %s:%d:%s on socket %d",
                         nspace, rank, version, pnd->sd);
-
-    /* do not check the version - we only retain it at this
-     * time in case we need to check it at some future date.
-     * For now, our intent is to retain backward compatibility
-     * and so we will assume that all versions are compatible. */
 
     /* see if we know this nspace */
     nptr = NULL;
@@ -520,15 +659,53 @@ static void connection_handler(int sd, short args, void *cbdata)
         return;
     }
 
-    /* get the appropriate compatibility modules */
-    if (PMIX_SUCCESS != pmix_psec.assign_module((struct pmix_peer_t*)psave, sec_mode)) {
+    /* check the version string */
+    if (0 == strncmp(version, "1.", 2)) {
+        protocol = PMIX_PROTOCOL_V1_USOCK;
+        /* this is a version 1.x client - the msg won't include a sec module
+         * as v1.x assumed it was specified at configure. We do still need
+         * to assign a module, so we will take the default */
+        if (PMIX_SUCCESS != pmix_psec.assign_module((struct pmix_peer_t*)psave, NULL)) {
+            info->proc_cnt--;
+            PMIX_RELEASE(info);
+            PMIX_RELEASE(psave);
+            pmix_pointer_array_set_item(&pmix_server_globals.clients, psave->index, NULL);
+            free(msg);
+            /* send an error reply to the client */
+            goto error;
+        }
+        /* the credential, if any, is sitting at the location of the ptr
+         * since it directly followed the version string */
+        cred = ptr;
+    } else if (0 == strncmp(version, "2.", 2)) {
+        protocol = PMIX_PROTOCOL_V2_USOCK;
+        /* this is a version 2.x client - the msg contains the sec module being
+         * used, plus the bfrops module and buffer type */
+        PMIX_STRNLEN(msglen, ptr, len);
+        if (msglen < len) {
+            nspace = ptr;
+            ptr += strlen(nspace) + 1;
+            len -= strlen(nspace) + 1;
+        } else {
+            info->proc_cnt--;
+            PMIX_RELEASE(info);
+            PMIX_RELEASE(psave);
+            pmix_pointer_array_set_item(&pmix_server_globals.clients, psave->index, NULL);
+            free(msg);
+            rc = PMIX_ERR_NOT_SUPPORTED;
+        }
+    } else {
+        /* we don't know this version and cannot support it */
         info->proc_cnt--;
         PMIX_RELEASE(info);
-        PMIX_RELEASE(psave);
         pmix_pointer_array_set_item(&pmix_server_globals.clients, psave->index, NULL);
-        /* send an error reply to the client */
+        PMIX_RELEASE(psave);
+        free(msg);
+        rc = PMIX_ERR_NOT_SUPPORTED;
         goto error;
     }
+
+    /* get the appropriate compatibility modules */
     /* the choice of PTL module was obviously made by the connecting
      * tool as we received this request via that channel, so simply
      * record it here for future use */
@@ -541,7 +718,7 @@ static void connection_handler(int sd, short args, void *cbdata)
         len = strlen(cred);
     }
     if (PMIX_SUCCESS != (rc = pmix_psec.validate_connection((struct pmix_peer_t*)psave,
-                                                            PMIX_PROTOCOL_V1, cred, len))) {
+                                                            protocol, cred, len))) {
         pmix_output_verbose(2, pmix_ptl_base_framework.framework_output,
                             "validation of client credentials failed: %s",
                             PMIx_Error_string(rc));

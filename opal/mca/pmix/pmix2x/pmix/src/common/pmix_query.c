@@ -1,6 +1,6 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
- * Copyright (c) 2014-2017 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2016      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * Copyright (c) 2016      IBM Corporation.  All rights reserved.
@@ -24,7 +24,7 @@
 #include "src/util/argv.h"
 #include "src/util/error.h"
 #include "src/util/output.h"
-#include "src/buffer_ops/buffer_ops.h"
+#include "src/mca/bfrops/bfrops.h"
 #include "src/mca/ptl/ptl.h"
 
 #include "src/client/pmix_client_ops.h"
@@ -59,7 +59,7 @@ static void query_cbfunc(struct pmix_peer_t *peer,
 
     /* unpack the status */
     cnt = 1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &results->status, &cnt, PMIX_STATUS))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, buf, &results->status, &cnt, PMIX_STATUS))) {
         PMIX_ERROR_LOG(rc);
         goto complete;
     }
@@ -69,20 +69,16 @@ static void query_cbfunc(struct pmix_peer_t *peer,
 
     /* unpack any returned data */
     cnt = 1;
-    if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, &results->ninfo, &cnt, PMIX_SIZE))) {
+    if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, buf, &results->ninfo, &cnt, PMIX_SIZE))) {
         PMIX_ERROR_LOG(rc);
         goto complete;
     }
     if (0 < results->ninfo) {
         PMIX_INFO_CREATE(results->info, results->ninfo);
         cnt = results->ninfo;
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.unpack(buf, results->info, &cnt, PMIX_INFO))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.unpack(peer, buf, results->info, &cnt, PMIX_INFO))) {
             PMIX_ERROR_LOG(rc);
-            pmix_output(0, "TYPE: %d", results->info[0].value.type);
-            results->status = rc;
-            PMIX_INFO_FREE(results->info, results->ninfo);
-            results->info = NULL;
-            results->ninfo = 0;
+            goto complete;
         }
     }
 
@@ -135,19 +131,22 @@ PMIX_EXPORT pmix_status_t PMIx_Query_info_nb(pmix_query_t queries[], size_t nque
         cd->cbfunc = cbfunc;
         cd->cbdata = cbdata;
         msg = PMIX_NEW(pmix_buffer_t);
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &cmd, 1, PMIX_CMD))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, &cmd, 1, PMIX_CMD))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msg);
             PMIX_RELEASE(cd);
             return rc;
         }
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, &nqueries, 1, PMIX_SIZE))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, &nqueries, 1, PMIX_SIZE))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msg);
             PMIX_RELEASE(cd);
             return rc;
         }
-        if (PMIX_SUCCESS != (rc = pmix_bfrop.pack(msg, queries, nqueries, PMIX_QUERY))) {
+        if (PMIX_SUCCESS != (rc = pmix_bfrops.pack(&pmix_client_globals.myserver,
+                                                   msg, queries, nqueries, PMIX_QUERY))) {
             PMIX_ERROR_LOG(rc);
             PMIX_RELEASE(msg);
             PMIX_RELEASE(cd);
@@ -155,7 +154,8 @@ PMIX_EXPORT pmix_status_t PMIx_Query_info_nb(pmix_query_t queries[], size_t nque
         }
         pmix_output_verbose(2, pmix_globals.debug_output,
                             "pmix:query sending to server");
-        if (PMIX_SUCCESS != (rc = pmix_ptl.send_recv(&pmix_client_globals.myserver, msg, query_cbfunc, (void*)cd))){
+        if (PMIX_SUCCESS != (rc = pmix_ptl.send_recv(&pmix_client_globals.myserver,
+                                                     msg, query_cbfunc, (void*)cd))){
             PMIX_RELEASE(cd);
         }
     }
