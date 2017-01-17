@@ -109,7 +109,7 @@ int pmix_rte_init(pmix_proc_type_t type,
     pmix_init_called = true;
 
     /* initialize the output system */
-    if (!pmix_output_init()) {
+    if (!pmix_output_init(info, ninfo)) {
         return PMIX_ERROR;
     }
 

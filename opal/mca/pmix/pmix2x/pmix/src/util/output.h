@@ -67,7 +67,7 @@
 #define PMIX_OUTPUT_H_
 
 #include <src/include/pmix_config.h>
-
+#include "pmix_common.h"
 
 #ifdef HAVE_STDARG_H
 #include <stdarg.h>
@@ -269,7 +269,7 @@ struct pmix_output_stream_t {
      * By definition, the default verbose stream has a handle ID of 0,
      * and has a verbose level of 0.
      */
-    bool pmix_output_init(void);
+    bool pmix_output_init(pmix_info_t info[], size_t ninfo);
 
     /**
      * Shut down the output stream system.

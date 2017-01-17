@@ -480,7 +480,7 @@ pmix_status_t pmix_bfrops_base_value_xfer(pmix_value_t *p,
             break;
         }
         /* allocate space and do the copy */
-        switch (src->type) {
+        switch (src->data.darray->type) {
             case PMIX_UINT8:
             case PMIX_INT8:
             case PMIX_BYTE:
@@ -812,6 +812,7 @@ pmix_status_t pmix_bfrops_base_value_xfer(pmix_value_t *p,
                 }
                 break;
             case PMIX_DATA_ARRAY:
+                PMIX_ERROR_LOG(PMIX_ERR_NOT_SUPPORTED);
                 return PMIX_ERR_NOT_SUPPORTED;  // don't support iterative arrays
             case PMIX_QUERY:
                 PMIX_QUERY_CREATE(p->data.darray->array, src->data.darray->size);

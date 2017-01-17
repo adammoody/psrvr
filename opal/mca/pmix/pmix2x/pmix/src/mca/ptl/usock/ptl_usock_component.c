@@ -413,8 +413,6 @@ static pmix_status_t setup_listener(pmix_info_t info[], size_t ninfo,
 
   sockerror:
     free(tmpdir);
-    pmix_list_remove_item(&pmix_ptl_globals.listeners, &lt->super);
-    PMIX_RELEASE(lt);
     return PMIX_ERROR;
 }
 

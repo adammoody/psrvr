@@ -123,7 +123,7 @@ PMIX_CLASS_INSTANCE(pmix_output_stream_t, pmix_object_t, construct, NULL);
 /*
  * Setup the output stream infrastructure
  */
-bool pmix_output_init(void)
+bool pmix_output_init(pmix_info_t pinfo[], size_t ninfo)
 {
     int i;
     char hostname[PMIX_MAXHOSTNAMELEN];
@@ -201,7 +201,7 @@ bool pmix_output_init(void)
     if (0 > asprintf(&output_prefix, "output-pid%d-", getpid())) {
         return false;
     }
-    output_dir = strdup(pmix_tmp_directory(NULL, 0, NULL));
+    output_dir = pmix_tmp_directory(pinfo, ninfo, PMIX_SERVER_TMPDIR);
 
     /* Open the default verbose stream */
     verbose_stream = pmix_output_open(&verbose);
@@ -233,12 +233,6 @@ int pmix_output_reopen(int output_id, pmix_output_stream_t * lds)
 bool pmix_output_switch(int output_id, bool enable)
 {
     bool ret = false;
-
-    /* Setup */
-
-    if (!initialized) {
-        pmix_output_init();
-    }
 
     if (output_id >= 0 && output_id < PMIX_OUTPUT_MAX_STREAMS) {
         ret = info[output_id].ldi_enabled;
@@ -541,12 +535,6 @@ static int do_open(int output_id, pmix_output_stream_t * lds)
     int i;
     bool redirect_to_file = false;
     char *str, *sfx;
-
-    /* Setup */
-
-    if (!initialized) {
-        pmix_output_init();
-    }
 
     str = getenv("PMIX_OUTPUT_REDIRECT");
     if (NULL != str && 0 == strcasecmp(str, "file")) {
@@ -899,12 +887,6 @@ static int output(int output_id, const char *format, va_list arglist)
     int rc = PMIX_SUCCESS;
     char *str, *out = NULL;
     output_desc_t *ldi;
-
-    /* Setup */
-
-    if (!initialized) {
-        pmix_output_init();
-    }
 
     /* If it's valid, used, and enabled, output */
 
