@@ -134,6 +134,12 @@ int orte_odls_base_default_get_add_procs_data(opal_buffer_t *buffer,
         /* pack the job struct */
         if (ORTE_SUCCESS != (rc = opal_dss.pack(buffer, &jdata, 1, ORTE_JOB))) {
             ORTE_ERROR_LOG(rc);
+            return rc;
+        }
+        /* add in any app-specific info */
+        if (ORTE_SUCCESS != (rc = orte_pmix_server_setup_job(jdata, buffer))) {
+            ORTE_ERROR_LOG(rc);
+            return rc;
         }
         return rc;
     }
@@ -237,6 +243,12 @@ int orte_odls_base_default_get_add_procs_data(opal_buffer_t *buffer,
 
     /* pack the job struct */
     if (ORTE_SUCCESS != (rc = opal_dss.pack(buffer, &jdata, 1, ORTE_JOB))) {
+        ORTE_ERROR_LOG(rc);
+        return rc;
+    }
+
+    /* add in any app-specific info */
+    if (ORTE_SUCCESS != (rc = orte_pmix_server_setup_job(jdata, buffer))) {
         ORTE_ERROR_LOG(rc);
         return rc;
     }
@@ -505,6 +517,14 @@ int orte_odls_base_default_construct_child_list(opal_buffer_t *buffer,
     if (ORTE_SUCCESS != (rc = orte_pmix_server_register_nspace(jdata))) {
         ORTE_ERROR_LOG(rc);
         goto REPORT_ERROR;
+    }
+
+    /* if we have local procs, then prep the local drivers */
+    if (0 < jdata->num_local_procs) {
+        if (ORTE_SUCCESS != (rc = orte_pmix_server_setup_drivers(jdata, buffer))) {
+            ORTE_ERROR_LOG(rc);
+            goto REPORT_ERROR;
+        }
     }
     return ORTE_SUCCESS;
 

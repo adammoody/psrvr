@@ -54,14 +54,23 @@ typedef void (*pmix_pnet_base_module_fini_fn_t)(void);
  * Provide an opportunity for the network to define values that
  * are to be passed to an application. This can include security
  * tokens required for application processes to communicate with
- * each other
+ * each other. Envar directives (i.e., keys PMIX_SET_ENVAR and
+ * PMIX_UNSET_ENVAR) will be used to modify the environment passed
+ * to the spawned processes. The PMIX_SETUP_LOCAL_SUPPORT key can
+ * be used to designate info that is to be included in the call
+ * to PMIx_server_setup_local_support on the remote nodes prior
+ * to spawning application prcs. All other info values will be included
+ * in the job-level info passed to the processes.
  */
-typedef pmix_status_t (*pmix_pnet_base_module_setup_app_fn_t)(char *nspace, pmix_list_t *ilist);
+typedef pmix_status_t (*pmix_pnet_base_module_setup_app_fn_t)(char *nspace,
+                                                              pmix_info_t info[], size_t ninfo,
+                                                              pmix_list_t *ilist);
 
 /**
  * Give the local network library an opportunity to setup address information
  * for the application by passing in the layout type and a regex describing
- * the layout */
+ * the layout. This will include job size and layout information, plus any
+ * info provided in a PMIX_SETUP_LOCAL_SUPPORT key. */
 typedef pmix_status_t (*pmix_pnet_base_module_setup_local_net_fn_t)(char *nspace,
                                                                     pmix_info_t info[],
                                                                     size_t ninfo);

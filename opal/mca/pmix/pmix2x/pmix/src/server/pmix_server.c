@@ -1452,7 +1452,7 @@ static void _setup_app(int sd, short args, void *cbdata)
     PMIX_CONSTRUCT(&ilist, pmix_list_t);
 
     /* pass to the network libraries */
-    if (PMIX_SUCCESS != (rc = pmix_pnet.setup_app(cd->nspace, &ilist))) {
+    if (PMIX_SUCCESS != (rc = pmix_pnet.setup_app(cd->nspace, cd->info, cd->ninfo, &ilist))) {
         goto depart;
     }
 

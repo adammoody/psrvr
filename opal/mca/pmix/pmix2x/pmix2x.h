@@ -251,6 +251,14 @@ OPAL_MODULE_DECLSPEC int pmix2x_server_notify_event(int status,
                                                     const opal_process_name_t *source,
                                                     opal_list_t *info,
                                                     opal_pmix_op_cbfunc_t cbfunc, void *cbdata);
+OPAL_MODULE_DECLSPEC int pmix2x_server_setup_application(opal_jobid_t jobid,
+                                                         opal_list_t *info,
+                                                         opal_pmix_info_cbfunc_t cbfunc, void *cbdata);
+
+OPAL_MODULE_DECLSPEC int pmix2x_server_setup_local_support(opal_jobid_t jobid,
+                                                           opal_list_t *info,
+                                                           opal_pmix_op_cbfunc_t cbfunc, void *cbdata);
+
 
 
 /****  COMPONENT UTILITY FUNCTIONS  ****/

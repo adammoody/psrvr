@@ -534,3 +534,138 @@ int pmix2x_server_notify_event(int status,
     }
     return pmix2x_convert_rc(rc);
 }
+
+static void relcbfunc(void *cbdata)
+{
+    pmix2x_opalcaddy_t *op = (pmix2x_opalcaddy_t*)cbdata;
+
+    OBJ_RELEASE(op);
+}
+
+static void infocbfunc(pmix_status_t status,
+                       pmix_info_t info[], size_t ninfo,
+                       void *provided_cbdata,
+                       pmix_op_cbfunc_t cbfunc, void *cbdata)
+{
+    pmix2x_opcaddy_t *op = (pmix2x_opcaddy_t*)provided_cbdata;
+    pmix2x_opalcaddy_t *opalcaddy;
+    opal_value_t *iptr;
+    size_t n;
+    pmix_status_t prc;
+    int rc;
+
+    /* setup the caddy */
+    opalcaddy = OBJ_NEW(pmix2x_opalcaddy_t);
+
+    /* convert the status */
+    rc = pmix2x_convert_rc(status);
+
+    /* convert the array of pmix_info_t to the list of info */
+    for (n=0; n < ninfo; n++) {
+        iptr = OBJ_NEW(opal_value_t);
+        opal_list_append(&opalcaddy->info, &iptr->super);
+        iptr->key = strdup(info[n].key);
+        if (OPAL_SUCCESS != (rc = pmix2x_value_unload(iptr, &info[n].value))) {
+            OBJ_RELEASE(opalcaddy);
+            OBJ_RELEASE(op);
+            goto release;
+        }
+    }
+
+    /* pass up the answer */
+    if (NULL != op->qcbfunc) {
+        op->qcbfunc(rc, &opalcaddy->info, op->cbdata, relcbfunc, op);
+    }
+
+  release:
+    prc = pmix2x_convert_opalrc(rc);
+    if (NULL != cbfunc) {
+        cbfunc(prc, cbdata);
+    }
+}
+
+/* query the server to get any application-specific info we need
+ * to pass to the job at startup */
+int pmix2x_server_setup_application(opal_jobid_t jobid,
+                                    opal_list_t *info,
+                                    opal_pmix_info_cbfunc_t cbfunc, void *cbdata)
+{
+    opal_value_t *kv;
+    pmix2x_opcaddy_t *op;
+    pmix_status_t rc;
+    pmix_info_t *pinfo;
+    size_t sz, n;
+
+    /* convert the list to an array of pmix_info_t */
+    if (NULL != info) {
+        sz = opal_list_get_size(info);
+        PMIX_INFO_CREATE(pinfo, sz);
+        n = 0;
+        OPAL_LIST_FOREACH(kv, info, opal_value_t) {
+            (void)strncpy(pinfo[n].key, kv->key, PMIX_MAX_KEYLEN);
+            pmix2x_value_load(&pinfo[n].value, kv);
+            ++n;
+        }
+    } else {
+        sz = 0;
+        pinfo = NULL;
+    }
+    /* setup the caddy */
+    op = OBJ_NEW(pmix2x_opcaddy_t);
+    op->info = pinfo;
+    op->sz = sz;
+    op->qcbfunc = cbfunc;
+    op->cbdata = cbdata;
+    /* convert the jobid */
+    (void)opal_snprintf_jobid(op->p.nspace, PMIX_MAX_NSLEN, jobid);
+
+    /* call the server */
+    rc = PMIx_server_setup_application(op->p.nspace, op->info, op->sz,
+                                       infocbfunc, op);
+    if (PMIX_SUCCESS != rc) {
+        OBJ_RELEASE(op);
+    }
+    return pmix2x_convert_rc(rc);
+}
+
+int pmix2x_server_setup_local_support(opal_jobid_t jobid,
+                                      opal_list_t *info,
+                                      opal_pmix_op_cbfunc_t cbfunc, void *cbdata)
+{
+    opal_value_t *kv;
+    pmix2x_opcaddy_t *op;
+    pmix_status_t rc;
+    pmix_info_t *pinfo;
+    size_t sz, n;
+
+    /* convert the list to an array of pmix_info_t */
+    if (NULL != info) {
+        sz = opal_list_get_size(info);
+        PMIX_INFO_CREATE(pinfo, sz);
+        n = 0;
+        OPAL_LIST_FOREACH(kv, info, opal_value_t) {
+            (void)strncpy(pinfo[n].key, kv->key, PMIX_MAX_KEYLEN);
+            pmix2x_value_load(&pinfo[n].value, kv);
+            ++n;
+        }
+    } else {
+        sz = 0;
+        pinfo = NULL;
+    }
+    /* setup the caddy */
+    op = OBJ_NEW(pmix2x_opcaddy_t);
+    op->info = pinfo;
+    op->sz = sz;
+    op->opcbfunc = cbfunc;
+    op->cbdata = cbdata;
+    /* convert the jobid */
+    (void)opal_snprintf_jobid(op->p.nspace, PMIX_MAX_NSLEN, jobid);
+
+    /* call the server */
+    rc = PMIx_server_setup_local_support(op->p.nspace, op->info, op->sz,
+                                        opcbfunc, op);
+    if (PMIX_SUCCESS != rc) {
+        OBJ_RELEASE(op);
+    }
+    return pmix2x_convert_rc(rc);
+}

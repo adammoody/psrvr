@@ -12,7 +12,7 @@
  * Copyright (c) 2006-2013 Los Alamos National Security, LLC.
  *                         All rights reserved.
  * Copyright (c) 2010-2011 Cisco Systems, Inc.  All rights reserved.
- * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014      Mellanox Technologies, Inc.
  *                         All rights reserved.
  * Copyright (c) 2014      Research Organization for Information Science
@@ -84,6 +84,7 @@ typedef struct {
     opal_pmix_op_cbfunc_t cbfunc;
     opal_pmix_info_cbfunc_t infocbfunc;
     opal_pmix_tool_connection_cbfunc_t toolcbfunc;
+    opal_pmix_release_cbfunc_t rlcbfunc;
     void *cbdata;
 } orte_pmix_server_op_caddy_t;
 OBJ_CLASS_DECLARATION(orte_pmix_server_op_caddy_t);

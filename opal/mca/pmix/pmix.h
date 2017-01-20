@@ -1,6 +1,6 @@
 /* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
- * Copyright (c) 2014-2015 Intel, Inc. All rights reserved.
+ * Copyright (c) 2014-2017 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Los Alamos National Security, LLC. All rights
  *                         reserved.
  * $COPYRIGHT$
@@ -692,6 +692,24 @@ typedef int (*opal_pmix_base_module_server_notify_event_fn_t)(int status,
                                                               opal_list_t *info,
                                                               opal_pmix_op_cbfunc_t cbfunc, void *cbdata);
 
+/* Request application-specific information prior to
+ * launch of an application. For example, network libraries may
+ * opt to provide security credentials for the application. This
+ * is defined as a non-blocking operation in case network
+ * libraries need to perform some action before responding. The
+ * returned info will be distributed along with the application */
+typedef int (*opal_pmix_base_module_server_setup_application_fn_t)(opal_jobid_t jobid,
+                                                                   opal_list_t *info,
+                                                                   opal_pmix_info_cbfunc_t cbfunc, void *cbdata);
+
+/* Provide a function by which the local daemon can perform
+ * any application-specific operations prior to spawning local
+ * clients of a given application. For example, a network library
+ * might need to setup the local driver for "instant on" addressing.
+ */
+typedef int (*opal_pmix_base_module_server_setup_local_support_fn_t)(opal_jobid_t jobid,
+                                                                     opal_list_t *info,
+                                                                     opal_pmix_op_cbfunc_t cbfunc, void *cbdata);
 
 /************************************************************
  *                       UTILITY APIs                       *
@@ -837,6 +855,8 @@ typedef struct {
     opal_pmix_base_module_server_setup_fork_fn_t            server_setup_fork;
     opal_pmix_base_module_server_dmodex_request_fn_t        server_dmodex_request;
     opal_pmix_base_module_server_notify_event_fn_t          server_notify_event;
+    opal_pmix_base_module_server_setup_application_fn_t     server_setup_application;
+    opal_pmix_base_module_server_setup_local_support_fn_t   server_setup_local_support;
     /* Utility APIs */
     opal_pmix_base_module_get_version_fn_t                  get_version;
     opal_pmix_base_module_register_fn_t                     register_evhandler;
