@@ -243,6 +243,9 @@ BEGIN_C_DECLS
 #define OPAL_PMIX_DEBUG_JOB                     "pmix.dbg.job"           // (char*) nspace of the job to be debugged - the RM/PMIx server are
 #define OPAL_PMIX_DEBUG_WAITING_FOR_NOTIFY      "pmix.dbg.waiting"       // (bool) job to be debugged is waiting for a release
 
+/* attributes relating to allocations */
+#define OPAL_PMIX_TIME_REMAINING                "pmix.time.remaining"    // (uint32_t) get number of seconds remaining in allocation
+
 
 /* define a scope for data "put" by PMI per the following:
  *

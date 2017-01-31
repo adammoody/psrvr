@@ -319,8 +319,11 @@ typedef uint32_t pmix_rank_t;
 #define PMIX_RM_VERSION                     "pmix.rm.version"        // (char*) RM version string
 
 /* attributes for setting envars */
-#define PMIX_SET_ENVAR                      "pmix.set.envar"        // (char*) string "key=value" value shall be put into the environment
-#define PMIX_UNSET_ENVAR                    "pmix.unset.envar"      // (char*) unset envar specified in string
+#define PMIX_SET_ENVAR                      "pmix.set.envar"         // (char*) string "key=value" value shall be put into the environment
+#define PMIX_UNSET_ENVAR                    "pmix.unset.envar"       // (char*) unset envar specified in string
+
+/* attributes relating to allocations */
+#define PMIX_TIME_REMAINING                 "pmix.time.remaining"    // (uint32_t) get number of seconds remaining in allocation
 
 
 /****    PROCESS STATE DEFINITIONS    ****/

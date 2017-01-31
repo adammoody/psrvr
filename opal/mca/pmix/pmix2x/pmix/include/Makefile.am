@@ -8,8 +8,6 @@
 # $HEADER$
 #
 
-# Only install the headers if we're in standalone mode
-
 if WANT_PRIMARY_HEADERS
 include_HEADERS = \
         pmix.h \

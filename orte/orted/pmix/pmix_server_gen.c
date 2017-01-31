@@ -40,6 +40,7 @@
 #include "orte/mca/errmgr/errmgr.h"
 #include "orte/mca/iof/iof.h"
 #include "orte/mca/rmaps/rmaps_types.h"
+#include "orte/mca/schizo/schizo.h"
 #include "orte/mca/state/state.h"
 #include "orte/util/name_fns.h"
 #include "orte/runtime/orte_globals.h"
@@ -456,7 +457,7 @@ static void _query(int sd, short args, void *cbdata)
     int rc, i, num_replies;
     opal_list_t *results, targets, *array;
     size_t n;
-    uint32_t key;
+    uint32_t key, time;
     void *nptr;
     char **nspaces=NULL, nspace[512];
     char **ans = NULL;
@@ -612,6 +613,15 @@ static void _query(int sd, short args, void *cbdata)
                      * we need to xcast the request and collect the results */
                 }
 
+            } else if (0 == strcmp(q->keys[n], OPAL_PMIX_TIME_REMAINING)) {
+                if (NULL != orte_schizo.get_remaining_time) {
+                    time = orte_schizo.get_remaining_time();
+                    kv = OBJ_NEW(opal_value_t);
+                    kv->key = strdup(OPAL_PMIX_TIME_REMAINING);
+                    kv->type = OPAL_UINT32;
+                    kv->data.uint32 = time;
+                    opal_list_append(results, &kv->super);
+                }
             }
         }
     }
