@@ -30,7 +30,7 @@ AC_DEFUN([ORTE_CHECK_MOAB],[
         AC_ARG_WITH([moab],
                     [AC_HELP_STRING([--with-moab],
                                     [Build MOAB scheduler component (default: yes)])])
-        OPAL_CHECK_WITHDIR([moab], [$with_moab], [mapi.h])
+        OPAL_CHECK_WITHDIR([moab], [$with_moab], [moab/mapi.h])
         AC_ARG_WITH([moab-libdir],
                     [AC_HELP_STRING([--with-moab-libdir=DIR],
                     [Search for Moab libraries in DIR])])
@@ -58,7 +58,7 @@ AC_DEFUN([ORTE_CHECK_MOAB],[
 
         AS_IF([test $orte_check_moab_happy = yes],
               [OPAL_CHECK_PACKAGE([orte_check_moab],
-                                  [mapi.h],
+                                  [moab/mapi.h],
                                   [cmoab],
                                   [MCCJobGetRemainingTime],
                                   [],
