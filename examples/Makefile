@@ -34,6 +34,7 @@ CFLAGS = -g
 
 EXAMPLES = \
 	 client \
+	 client_timerem \
 	 debugger \
 	 debuggerd \
 	 dmodex \
